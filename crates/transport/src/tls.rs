@@ -1,24 +1,58 @@
-use std::fs::File;
-use std::io::{BufReader, Error, ErrorKind};
-use std::path::Path;
-use rustls::pki_types::{CertificateChain, PrivateKeyDer};
-use rustls_pemfile::{certs, private_key};
+use crate::SentinelTransport;
+use async_trait::async_trait;
+use std::net::SocketAddr;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
+use tokio_rustls::server::TlsStream as ServerTlsStream;
+use tokio::net::TcpStream;
 
-pub fn load_certs(path: &Path) -> std::io::Result<Vec<CertificateChain<'static>>> {
-    /// Open the file and wrap it in a BufReader for efficiency.
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-
-    let certs = certs(&mut reader)
-        .collect::<Result<Vec<_>, _>>()?;
-    
-    Ok(certs)
+pub struct TlsTransport {
+    pub(crate) inner: ServerTlsStream<TcpStream>,
 }
 
-pub fn load_private_key(path: &Path) -> std::io::Result<PrivateKeyDer<'static>> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
+impl TlsTransport {
+    pub fn new(inner: ServerTlsStream<TcpStream>) -> Self {
+        Self { inner }
+    }
+}
 
-    private_key(&mut reader)?
-        .ok_or_else(|| Error::new(ErrorKind::NotFound, "No private key found"))
+#[async_trait]
+impl SentinelTransport for TlsTransport {
+    fn peer_addr(&self) -> Result<SocketAddr, std::io::Error> {
+        let (tcp, _) = self.inner.get_ref();
+        tcp.peer_addr()
+    }
+
+    fn is_secure(&self) -> bool {
+        true
+    }
+}
+
+impl AsyncRead for TlsTransport {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_read(cx, buf)
+    }
+}
+
+impl AsyncWrite for TlsTransport {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<std::io::Result<usize>> {
+        Pin::new(&mut self.inner).poll_write(cx, buf)
+    }
+
+    fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_flush(cx)
+    }
+
+    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<std::io::Result<()>> {
+        Pin::new(&mut self.inner).poll_shutdown(cx)
+    }
 }

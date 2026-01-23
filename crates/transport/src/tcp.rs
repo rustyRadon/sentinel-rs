@@ -19,12 +19,10 @@ impl RawTcpTransport {
 #[async_trait]
 impl SentinelTransport for RawTcpTransport {
     fn peer_addr(&self) -> Result<SocketAddr, std::io::Error> {
-        // delegate to the underlying OS socket call.
         self.inner.peer_addr()
     }
 
     fn is_secure(&self) -> bool {
-        // Line-by-line: This is raw TCP; it is inherently unencrypted.
         false
     }
 }

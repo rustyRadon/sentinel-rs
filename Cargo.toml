@@ -12,8 +12,8 @@ members = [
 [workspace.package]
 name = "sentinel-rs"
 version = "0.1.0"
-edition = "2021"
-authors = ["Your Name <you@example.com>"]
+edition = "2025"
+authors = ["Abdulrahman Hassan <hassantech.1111@gmail.com>"]
 description = "A high-performance, TLS-1.3-first networking engine with zero-copy binary framing."
 repository = "https://github.com/rustyRadon/sentinel-rs"
 license = "MIT OR Apache-2.0"

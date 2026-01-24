@@ -104,7 +104,35 @@ Then the 4 bytes on the wire are:
 code reconstructs:
 u32::from_be_bytes([0x00, 0x00, 0x00, 0x0C]) == 12
 
----Extract the payload (ZERO-COPY!)
+---Extract the payload (ZERO-COPY)
 src.advance(HEADER_SIZE);                    // "Move past the header"
 let payload = src.split_to(payload_len).freeze();  // "Take the payload WITHOUT copying"
 src.advance(CRC_LEN);                        // "Move past the CRC"
+
+let frame = Frame::new(1, 0xAB, Bytes::from("Hello World!")).unwrap();
+let mut buffer = BytesMut::new();  // Empty box
+frame.encode(&mut buffer);         // Pack the frame into the box
+
+complete example 
+let frame = Frame::new(1, 0xAB, Bytes::from("Hello")).unwrap();
+let mut buffer = BytesMut::new();
+frame.encode(&mut buffer).unwrap();
+
+println!("Buffer hex: {:?}", buffer);  // Shows all bytes
+
+[53 4E 54 4C 01 AB 00 00 00 05 48 65 6C 6C 6F DE AD BE EF]
+│   │   │   │  │  │  └─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┴─┘
+│   │   │   │  │  │    │        │              │
+│   │   │   │  │  │    │        │              └─ CRC (0xDEADBEEF)
+│   │   │   │  │  │    │        └─ Payload "Hello"
+│   │   │   │  │  │    └─ Length (5) in network byte order
+│   │   │   │  │  └─ Flags (0xAB)
+│   │   │   │  └─ Version (1)
+│   │   │   └─ Magic "T" (0x54)
+│   │   └─ Magic "N" (0x4E)
+│   └─ Magic "S" (0x53)
+└─ This is how hex looks!
+
+Codec        → Manages: Streaming, buffering, async I/O
+Frame        → Manages: Binary format, validation, parsing
+Application  → Manages: Business logic, message content

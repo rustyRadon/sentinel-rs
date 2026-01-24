@@ -113,12 +113,12 @@ impl Frame {
         dst.put_slice(&MAGIC);
         dst.put_u8(self.version);
         dst.put_u8(self.flags);
-        dst.put_u32(payload_len as u32);
+        dst.put_u32(payload_len as u32).to_be();
         
-        dst.put(self.payload.clone());
+        dst.extend_from_slice(&self.payload);
 
         let crc = Self::calculate_crc(self.version, self.flags, &self.payload);
-        dst.put_u32(crc);
+        dst.put_u32(crc).to_be();
 
         Ok(())
     }

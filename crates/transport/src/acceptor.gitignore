@@ -98,3 +98,30 @@ impl SentinelAcceptor {
         }
     }
 }
+
+
+cert.pem ──┐
+           ├─→ SentinelAcceptor::new() → TLS Handshake → Secure Connection
+key.pem  ──┘
+     │           │
+     │           │
+     ▼           ▼
+ load_certs()   load_private_key()
+     │           │
+     ▼           ▼
+  certs[]      key
+     │           │
+     ▼           ▼
+  ServerConfig::builder()
+            │
+            ▼
+  ServerConfig (with certs + key)
+            │
+            ▼
+      Arc::new()        [Share across connections]
+            │
+            ▼
+   TlsAcceptor::from()
+            │
+            ▼
+  SentinelAcceptor.acceptor

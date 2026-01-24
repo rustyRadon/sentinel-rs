@@ -1,0 +1,7 @@
+Offset      Field	    Size	    Purpose
+0	        Magic       Bytes	    4 bytes	Identifies the protocol (e.g., 0x53 0x4E 0x54 0x4C for "SNTL")
+4	        Version	    1 byte	    Rule #22: Allows for future protocol upgrades
+5	        Flags	    1 byte	    Compression, Encryption, or Heartbeat markers
+6	        Payload     Length	    4 bytes	Rule #20: Tells the receiver how many bytes to read next
+10	        Payload	    N bytes	    The actual data (JSON, Protobuf, or Raw)
+10+N	    CRC32	    4 bytes	R   ule #21: Ensures the data wasn't corrupted in transit

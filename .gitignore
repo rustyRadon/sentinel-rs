@@ -71,3 +71,5 @@
 * Final SDK for third-party integration.
 * CLI tool for testing and monitoring.
 * Architecture diagrams and complete Protocol Specs.
+
+ the Heart (Router), the Arteries (Codec), and the Skin (TLS).

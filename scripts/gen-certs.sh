@@ -1,41 +1,43 @@
-
+#!/bin/bash
 set -e
 
-CERT_DIR="./certs"
-mkdir -p $CERT_DIR
+# Create certs directory if it doesn't exist
+mkdir -p certs
 
-echo "Creating Sentinel-rs CA..."
-openssl ecparam -name prime256v1 -genkey -noout -out $CERT_DIR/ca.key
-openssl req -new -x509 -sha256 -key $CERT_DIR/ca.key -out $CERT_DIR/ca.pem \
-    -subj "/C=US/ST=Tech/L=Sentinel/O=Sentinel-rs/CN=Sentinel Root CA" -days 3650
+echo "Generating Certificate Authority (CA)..."
+# 1. Generate CA Private Key
+openssl genrsa -out certs/ca.key 4096
 
-echo "Creating Server Certificate..."
-openssl ecparam -name prime256v1 -genkey -noout -out $CERT_DIR/server.key
-openssl req -new -key $CERT_DIR/server.key -out $CERT_DIR/server.csr \
-    -subj "/C=US/ST=Tech/L=Sentinel/O=Sentinel-rs/CN=localhost"
+# 2. Generate CA Certificate
+openssl req -x509 -new -nodes -key certs/ca.key -sha256 -days 3650 \
+    -out certs/ca.crt \
+    -subj "/C=US/ST=State/L=City/O=Sentinel/CN=Sentinel Root CA"
 
-# Create SAN config for localhost
-cat > $CERT_DIR/server.ext <<EOF
+echo "Generating Server Certificate..."
+# 3. Generate Server Private Key
+openssl genrsa -out certs/server.key 2048
+
+# 4. Create Certificate Signing Request (CSR)
+openssl req -new -key certs/server.key -out certs/server.csr \
+    -subj "/C=US/ST=State/L=City/O=Sentinel/CN=localhost"
+
+# 5. Create Extension file for SAN (Subject Alternative Name)
+cat > certs/server.ext << EOF
 authorityKeyIdentifier=keyid,issuer
 basicConstraints=CA:FALSE
 keyUsage = digitalSignature, nonRepudiation, keyEncipherment, dataEncipherment
 subjectAltName = @alt_names
+
 [alt_names]
 DNS.1 = localhost
 IP.1 = 127.0.0.1
 EOF
 
-openssl x509 -req -in $CERT_DIR/server.csr -CA $CERT_DIR/ca.pem -CAkey $CERT_DIR/ca.key \
-    -CAcreateserial -out $CERT_DIR/server.pem -days 365 -sha256 -extfile $CERT_DIR/server.ext
+openssl x509 -req -in certs/server.csr -CA certs/ca.crt -CAkey certs/ca.key \
+    -CAcreateserial -out certs/server.crt -days 825 -sha256 -extfile certs/server.ext
 
-echo "Creating Client Certificate (for mTLS)..."
-openssl ecparam -name prime256v1 -genkey -noout -out $CERT_DIR/client.key
-openssl req -new -key $CERT_DIR/client.key -out $CERT_DIR/client.csr \
-    -subj "/C=US/ST=Tech/L=Sentinel/O=Sentinel-rs/CN=sentinel-client-01"
+rm certs/server.csr certs/server.ext
 
-openssl x509 -req -in $CERT_DIR/client.csr -CA $CERT_DIR/ca.pem -CAkey $CERT_DIR/ca.key \
-    -CAcreateserial -out $CERT_DIR/client.pem -days 365 -sha256
+echo "Certificates generated in ./certs/"
+ls -l certs/
 
-# Cleanup CSRs and temp files
-rm $CERT_DIR/*.csr $CERT_DIR/*.ext $CERT_DIR/*.srl
-echo "Certificates generated in $CERT_DIR"

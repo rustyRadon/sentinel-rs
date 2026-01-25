@@ -1,54 +1,44 @@
+use std::sync::Arc;
 use std::path::Path;
-use std::time::Duration;
 use tokio::net::TcpStream;
-use tokio_util::codec::Framed;
-use futures::{SinkExt, StreamExt};
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+use rustls::pki_types::ServerName;
+use anyhow::Result;
 
-use sentinel_transport::acceptor::SentinelAcceptor; 
-use sentinel_protocol::codec::SentinelCodec;
-use sentinel_protocol::frame::Frame;
+use sentinel_transport::tls_config::load_certs;
+use sentinel_transport::TlsTransport;
 
 pub struct SentinelClient {
-    framed: Framed<tokio_rustls::client::TlsStream<TcpStream>, SentinelCodec>,
+    connector: TlsConnector,
 }
 
 impl SentinelClient {
-    /// Connects to a Sentinel Server with full TLS 1.3 verification
-    pub async fn connect(
-        addr: &str,
-        ca_path: &Path,
-        domain: &str,
-        timeout: Duration,
-    ) -> anyhow::Result<Self> {
-        let stream = tokio::time::timeout(timeout, TcpStream::connect(addr)).await??;
+    pub fn new(ca_path: &Path) -> Result<Self> {
+        let mut root_cert_store = RootCertStore::empty();
+        let ca_certs = load_certs(ca_path)?;
         
-        let mut root_cert_store = tokio_rustls::rustls::RootCertStore::empty();
-        let ca_certs = sentinel_transport::tls_config::load_certs(ca_path)?;
         for cert in ca_certs {
-            root_cert_store.add(cert.0[0].clone().into())?;
+            root_cert_store.add(cert)?;
         }
 
-        let config = tokio_rustls::rustls::ClientConfig::builder()
-            .with_safe_defaults()
+        let config = ClientConfig::builder()
             .with_root_certificates(root_cert_store)
-            .with_no_client_auth(); 
+            .with_no_client_auth();
 
-        let connector = tokio_rustls::TlsConnector::from(std::sync::Arc::new(config));
-        let domain = tokio_rustls::rustls::ServerName::try_from(domain)
-            .map_err(|_| anyhow::anyhow!("Invalid DNS name"))?;
-
-        let tls_stream = connector.connect(domain, stream).await?;
-
-        let framed = Framed::new(tls_stream, SentinelCodec::new());
-
-        Ok(Self { framed })
+        Ok(Self {
+            connector: TlsConnector::from(Arc::new(config)),
+        })
     }
 
-    pub async fn send_frame(&mut self, frame: Frame) -> anyhow::Result<()> {
-        self.framed.send(frame).await.map_err(Into::into)
-    }
+    pub async fn connect(&self, addr: &str, domain: &str) -> Result<TlsTransport<TcpStream>> {
+        let server_name = ServerName::try_from(domain.to_string())
+            .map_err(|_| anyhow::anyhow!("Invalid server name"))?
+            .to_owned();
 
-    pub async fn next_frame(&mut self) -> anyhow::Result<Option<Frame>> {
-        self.framed.next().await.transpose().map_err(Into::into)
+        let stream = TcpStream::connect(addr).await?;
+        let tls_stream = self.connector.connect(server_name, stream).await?;
+        
+        Ok(TlsTransport::new(tls_stream.into()))
     }
 }

@@ -1,47 +1,28 @@
-# sentinel-rs/Cargo.toml
 [workspace]
 resolver = "2"
 members = [
     "crates/sentinel-transport",
     "crates/sentinel-protocol",
-    "crates/sentinel-server",
-    "crates/sentinel-client",
-    "crates/sentinel-bench",
+    "crates/server",
+    "crates/client",
+    "crates/bench",
 ]
 
 [workspace.package]
-name = "sentinel-rs"
 version = "0.1.0"
-edition = "2025"
+edition = "2021"
 authors = ["Abdulrahman Hassan <hassantech.1111@gmail.com>"]
-description = "A high-performance, TLS-1.3-first networking engine with zero-copy binary framing."
-repository = "https://github.com/rustyRadon/sentinel-rs"
-license = "MIT OR Apache-2.0"
 
 [workspace.dependencies]
-# Internal Crates
 sentinel-transport = { path = "crates/sentinel-transport" }
 sentinel-protocol = { path = "crates/sentinel-protocol" }
-
-# Async & Networking
 tokio = { version = "1.36", features = ["full"] }
 tokio-rustls = "0.25"
 rustls = { version = "0.22", default-features = false, features = ["ring", "logging", "tls12"] }
-
-# Memory & Performance
 bytes = "1.5"
-smallvec = "1.13"
-crc32fast = "1.4"
-
-# Observability & Errors
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-thiserror = "1.0"
 anyhow = "1.0"
-
-[profile.release]
-opt-level = 3
-lto = "fat"
-codegen-units = 1
-panic = "abort"
-strip = true # Removes debug symbols to shrink the binary for production
+async-trait = "0.1"
+thiserror = "1.0"
+clap = { version = "4.4", features = ["derive"] }

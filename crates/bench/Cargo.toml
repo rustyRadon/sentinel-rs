@@ -1,0 +1,10 @@
+[package]
+name = "sentinel-bench"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+sentinel-protocol = { workspace = true }
+sentinel-transport = { workspace = true }
+tokio = { workspace = true }
+criterion = "0.5"

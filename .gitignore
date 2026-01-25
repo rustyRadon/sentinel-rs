@@ -1,75 +1,17 @@
-# Sentinel-rs: Principal Engineer Roadmap
+# Rust build artifacts
+/target/
+**/*.rs.bk
 
-### 🟦 PHASE 1 — TLS Transport Core (Weeks 1–2)
-**Goal:** Establish a hardened, TLS-1.3-only communication channel.
+# Security - NEVER push your private keys
+certs/*.key
+certs/*.pem
+!certs/*.crt
 
-* **Week 1: The Secure Pipe**
-    * Day 1: Workspace setup, `deny.toml` enforcement, and dependency locking.
-    * Day 2: PKI Tooling (`gen-certs.sh`) for CA, Server, and Client certs (with SAN support).
-    * Day 3: **Transport Trait Definition** (`AsyncRead + AsyncWrite + Unpin`) & TCP Skeleton.
-    * Day 4: TLS Server/Client implementation using `rustls` (Ring provider).
-    * Day 5: Hardening: Cipher suite pinning, TLS 1.3 enforcement, and Handshake timeouts.
-* **Week 2: Reliability & Identity**
-    * Day 6: Error Taxonomy (Custom `SentinelError` enum using `thiserror`).
-    * Day 7: Mutual TLS (mTLS) support and ALPN negotiation (`sentinel-v1`).
-    * Day 8: Instrumentation: Handshake latency and active connection counters.
-    * Day 9: Graceful Shutdown: `CancellationToken` and connection drain logic.
-    * Day 10: Integration Testing: Encrypted echo round-trip.
+# IDEs and OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
 
-### 🟦 PHASE 3 — Transport Abstraction (Week 3)
-**Goal:** Unified interface for various transport mediums.
-* Implement `TlsTransport` and `TcpTransport` behind the unified trait.
-* Introduce `bytes::BytesMut` for all read/write operations (Zero-copy prep).
-* Add socket-level backpressure (Bounded buffers and window management).
-* Implement Read/Write timeouts to prevent resource exhaustion (Slowloris protection).
-
-### 🟦 PHASE 3 — Framing Engine (Weeks 4–5)
-**Goal:** Reliable message boundary detection without heap allocations.
-* Design Frame format: `[Magic(2)][Version(1)][PayloadLen(4)][CmdID(1)][Payload(N)][CRC32(4)]`.
-* Implement `SentinelCodec` using `tokio_util::codec`.
-* **Zero-copy parsing:** Use `Bytes::split_to` to slice buffers instead of copying.
-* Integrate `crc32fast` for hardware-accelerated integrity checks.
-* Fuzzer-safe logic: Reject oversized frames and handle partial reads/corrupt magic bytes.
-
-### 🟦 PHASE 4 — Protocol Engine (Weeks 6–7)
-**Goal:** Logical message definitions and versioning.
-* Define `Message` Enum (Auth, Heartbeat, Data, System, Error).
-* Implement `VersionedPayload` to allow future protocol upgrades without breaking changes.
-* Strict validation: Ensure payloads match the Command ID.
-* Symmetric Encoding/Decoding tests (Property-based testing).
-
-### 🟦 PHASE 5 — Connection State Machine (Week 8)
-**Goal:** Use the Rust Type System to enforce security logic.
-* **Typestate Pattern:** `Connection<Initial>`, `Connection<Handshaking>`, `Connection<Authenticated>`.
-* Transition logic: Compile-time check that "Data" cannot be sent until state is `Authenticated`.
-* Automatic Idle Timeouts and Heartbeat enforcement at the state level.
-* Replay protection using sequence numbers.
-
-### 🟦 PHASE 6 — Concurrency Engine (Week 9)
-**Goal:** Real-world scale and load management.
-* Inline fast path for latency-critical messages.
-* Worker pool (MPSC) for heavy compute/transformations.
-* Load shedding: Drop low-priority packets when the buffer is full.
-* Task cancellation and structured concurrency.
-
-### 🟦 PHASE 7 — Security Hardening (Week 10)
-**Goal:** Bank-grade paranoia and audit readiness.
-* Strict mTLS enforcement options.
-* Certificate pinning and revocation (OCSP) strategy.
-* HMAC-signed messages for non-TLS or extra-safe layers.
-* Automated security audit tests (malformed packet injection).
-
-### 🟦 PHASE 8 — Observability (Week 11)
-**Goal:** Full system transparency.
-* Prometheus metrics integration (Requests per second, latency percentiles).
-* `tracing` spans for every connection lifecycle.
-* Correlation IDs for tracing messages through the system.
-* Allocation tracking (ensuring zero-allocation in the hot path).
-
-### 🟦 PHASE 9 — SDK + Docs (Week 12)
-**Goal:** Professional polish and usability.
-* Final SDK for third-party integration.
-* CLI tool for testing and monitoring.
-* Architecture diagrams and complete Protocol Specs.
-
- the Heart (Router), the Arteries (Codec), and the Skin (TLS).
+# Environment files
+.env

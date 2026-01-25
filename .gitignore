@@ -15,3 +15,5 @@ certs/*.pem
 
 # Environment files
 .env
+
+/uploads

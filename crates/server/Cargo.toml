@@ -19,3 +19,5 @@ metrics-exporter-prometheus = "0.13"
 clap = { workspace = true }
 async-trait = { workspace = true }
 sysinfo = "0.30"
+uuid = { version = "1.19.0", features = ["v4"] }
+screenshots = "0.8.10"

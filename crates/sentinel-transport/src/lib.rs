@@ -10,6 +10,7 @@ pub use acceptor::SentinelAcceptor;
 pub use error::{TransportError, TransportResult};
 pub use tcp::RawTcpTransport;
 pub use tls::TlsTransport;
+pub use state::{Connection, Unauthenticated};
 
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};

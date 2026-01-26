@@ -68,9 +68,9 @@ impl Frame {
         if payload_len > MAX_FRAME_SIZE {
             return Err(ProtocolError::FrameTooLarge);
         }
-        if payload_len == 0 {
-            return Err(ProtocolError::ZeroLengthFrame);
-        }
+        // if payload_len == 0 {
+        //     return Err(ProtocolError::ZeroLengthFrame);
+        // }
 
         let total_size = HEADER_SIZE + payload_len + CRC_LEN;
         if src.len() < total_size {

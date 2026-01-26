@@ -4,9 +4,9 @@ use tokio_rustls::TlsAcceptor;
 use tokio_util::codec::Framed;
 use futures::{StreamExt, SinkExt};
 use tokio::sync::oneshot;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 
-use sentinel_protocol::codec::SentinelCodec;
+use sentinel_protocol::{Frame, codec::SentinelCodec};
 use crate::router::CommandRouter;
 use crate::metrics::Metrics;
 
@@ -41,10 +41,11 @@ impl SentinelEngine {
                     let metrics = self.metrics.clone();
 
                     tokio::spawn(async move {
-                        metrics.increment_connections(); // Rule #48
+                        metrics.increment_connections();
+                        info!("New connection from {}", peer_addr);
                         
                         if let Err(e) = Self::handle_client(stream, acceptor, router, peer_addr).await {
-                            error!("[{}] Connection error: {:?}", peer_addr, e);
+                            warn!("[{}] Connection closed: {:?}", peer_addr, e);
                         }
                         
                         metrics.decrement_connections();
@@ -72,13 +73,38 @@ impl SentinelEngine {
         ).await??;
 
         let mut framed = Framed::new(tls_stream, SentinelCodec::new());
+        let mut authenticated_user: Option<String> = None;
 
         while let Some(result) = framed.next().await {
             let frame = result?;
+
+            if authenticated_user.is_none() {
+                if frame.flags() == 0x02 {
+                    let password = String::from_utf8_lossy(frame.payload());
+                    if password == "my_secure_password" {
+                        authenticated_user = Some("Admin".to_string());
+                        info!("[{}] User authenticated as Admin", peer_addr);
+                        let ok_frame = Frame::new(1, 0x02, "AUTH_OK".into())?;
+                        framed.send(ok_frame).await?;
+                    } else {
+                        warn!("[{}] Failed login attempt", peer_addr);
+                        let fail_frame = Frame::new(1, 0x02, "AUTH_FAILED".into())?;
+                        framed.send(fail_frame).await?;
+                    }
+                } else {
+                    // Reject any other command if not logged in
+                    let err_frame = Frame::new(1, 0x00, "ERR: Authenticate first".into())?;
+                    framed.send(err_frame).await?;
+                }
+                continue;
+            }
+
             if let Some(response) = router.dispatch(frame).await? {
                 framed.send(response).await?;
             }
         }
+        
+        info!("[{}] Client disconnected", peer_addr);
         Ok(())
     }
 }

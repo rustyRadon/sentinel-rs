@@ -4,22 +4,38 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+# Internal Workspace Crates
 sentinel-protocol = { workspace = true }
 sentinel-transport = { workspace = true }
+
+# Runtime and Async
 tokio = { workspace = true }
 tokio-rustls = { workspace = true }
 tokio-util = { version = "0.7", features = ["codec"] }
 futures = "0.3"
+async-trait = { workspace = true }
+
+# Error Handling and Logging
 anyhow = { workspace = true }
-bytes = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+
+# Security (The Fixed Lines)
+# We use the workspace version but explicitly enable the 'ring' feature here.
+rustls = { workspace = true, features = ["ring"] }
+rustls-pemfile = "2.2.0"
+
+# Monitoring
 metrics = "0.22"
 metrics-exporter-prometheus = "0.13"
-clap = { workspace = true }
-async-trait = { workspace = true }
+
+# System Utilities
 sysinfo = "0.30"
-uuid = { version = "1.19.0", features = ["v4"] }
 screenshots = "0.8.10"
 image = "0.24"
+uuid = { version = "1.19.0", features = ["v4"] }
+
+# Misc
+bytes = { workspace = true }
+clap = { workspace = true }
 once_cell = "1.21.3"

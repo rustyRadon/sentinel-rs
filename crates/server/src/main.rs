@@ -1,81 +1,101 @@
-use std::path::PathBuf;
+use std::fs::File;
+use std::io::BufReader;
+use std::path::Path;
 use std::sync::Arc;
-use std::time::Duration;
-use clap::Parser;
-use futures::{SinkExt, StreamExt};
+use anyhow::{Context, Result};
 use tokio::net::TcpListener;
-use tokio_util::codec::Framed;
-use tracing::{info, error, debug};
+use tokio::sync::oneshot;
+use tokio_rustls::TlsAcceptor;
+use tracing::{info, Level, error};
+use tracing_subscriber;
 
-use sentinel_transport::SentinelAcceptor;
-use sentinel_protocol::SentinelCodec;
-use crate::router::CommandRouter;
-
+mod engine;
 mod router;
+mod metrics;
 mod handlers;
 
-#[derive(Parser)]
-struct Args {
-    #[arg(short, long, default_value = "0.0.0.0:8443")]
-    addr: String,
-    #[arg(long, default_value = "certs/server.crt")]
-    cert: PathBuf,
-    #[arg(long, default_value = "certs/server.key")]
-    key: PathBuf,
-}
+use crate::engine::SentinelEngine;
+use crate::router::CommandRouter;
+use crate::metrics::Metrics;
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt::init();
-    let args = Args::parse();
+async fn main() -> Result<()> {
+    tracing_subscriber::fmt()
+        .with_max_level(Level::INFO)
+        .init();
 
-    let router = Arc::new(CommandRouter::with_default_commands());
+    rustls::crypto::ring::default_provider()
+        .install_default()
+        .expect("Failed to install rustls crypto provider");
 
-    let acceptor = SentinelAcceptor::new(&args.cert, &args.key, Duration::from_secs(10))?;
-    let listener = TcpListener::bind(&args.addr).await?;
+    let cert_path = Path::new("certs/server.crt");
+    let key_path = Path::new("certs/server.key");
+
+    let certs = load_certs(cert_path).context("Failed to load server.crt")?;
+    let key = load_private_key(key_path).context("Failed to load server.key")?;
+
+    let tls_config = rustls::ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)
+        .context("Invalid TLS certificate or private key")?;
     
-    println!("SENTINEL_BASE_ACTIVE: Listening on {}", args.addr);
+    let acceptor = TlsAcceptor::from(Arc::new(tls_config));
 
-    loop {
-        let (stream, peer_addr) = listener.accept().await?;
-        let acceptor = acceptor.clone();
-        let router = Arc::clone(&router);
+    let addr = "0.0.0.0:8443";
+    let listener = TcpListener::bind(addr).await.context("Failed to bind to port 8443")?;
+    
+    let router = Arc::new(CommandRouter::with_default_commands());
+    let metrics = Metrics::new();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
 
-        tokio::spawn(async move {
-            match acceptor.accept(stream).await {
-                Ok(transport) => {
-                    info!("Connection secured: {}", peer_addr);
-                    let mut framed = Framed::new(transport, SentinelCodec::new());
+    info!("Sentinel Server starting on {}", addr);
 
-                    while let Some(result) = framed.next().await {
-                        match result {
-                            Ok(frame) => {
-                                let cmd = frame.flags();
-                                
-                                if cmd == 0x99 {
-                                    println!("[SYSTEM] Shutdown signal from {}", peer_addr);
-                                    std::process::exit(0);
-                                }
+    tokio::spawn(async move {
+        tokio::signal::ctrl_c()
+            .await
+            .expect("Failed to listen for shutdown signal");
+        info!("Shutdown signal received, cleaning up...");
+        let _ = shutdown_tx.send(());
+    });
 
-                                match router.dispatch(frame).await {
-                                    Ok(Some(response)) => {
-                                        if let Err(e) = framed.send(response).await {
-                                            error!("Failed to send response: {}", e);
-                                        }
-                                    }
-                                    Ok(None) => debug!("Command handled (fire-and-forget)"),
-                                    Err(e) => error!("Routing error: {}", e),
-                                }
-                            }
-                            Err(e) => {
-                                error!("Protocol error from {}: {}", peer_addr, e);
-                                break;
-                            }
-                        }
-                    }
-                }
-                Err(e) => error!("TLS Handshake failed for {}: {}", peer_addr, e),
-            }
-        });
+    let engine = SentinelEngine::new(
+        listener, 
+        acceptor, 
+        router, 
+        metrics, 
+        shutdown_rx
+    );
+
+    if let Err(e) = engine.run().await {
+        error!("Engine stopped with error: {:?}", e);
     }
+
+    info!("Sentinel Server shut down successfully.");
+    Ok(())
+}
+
+fn load_certs(path: &Path) -> Result<Vec<CertificateDer<'static>>> {
+    let file = File::open(path).context("Could not find certificate file")?;
+    let mut reader = BufReader::new(file);
+    let certs: Vec<CertificateDer<'static>> = rustls_pemfile::certs(&mut reader)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    Ok(certs)
+}
+
+fn load_private_key(path: &Path) -> Result<PrivateKeyDer<'static>> {
+    let file = File::open(path).context("Could not find private key file")?;
+    let mut reader = BufReader::new(file);
+    
+    if let Some(key_result) = rustls_pemfile::pkcs8_private_keys(&mut reader).next() {
+        return Ok(PrivateKeyDer::Pkcs8(key_result?));
+    }
+
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    if let Some(key_result) = rustls_pemfile::rsa_private_keys(&mut reader).next() {
+        return Ok(PrivateKeyDer::Pkcs1(key_result?));
+    }
+
+    Err(anyhow::anyhow!("No valid private key (PKCS8 or RSA) found in {:?}", path))
 }

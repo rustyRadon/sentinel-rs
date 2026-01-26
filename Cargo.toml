@@ -17,8 +17,8 @@ authors = ["Abdulrahman Hassan <hassantech.1111@gmail.com>"]
 sentinel-transport = { path = "crates/sentinel-transport" }
 sentinel-protocol = { path = "crates/sentinel-protocol" }
 tokio = { version = "1.36", features = ["full"] }
-tokio-rustls = "0.25"
-rustls = { version = "0.22", default-features = false, features = ["ring", "logging", "tls12"] }
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "logging", "tls12"] }
 bytes = "1.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

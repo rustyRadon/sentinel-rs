@@ -24,6 +24,7 @@ enum Commands {
     Upload { #[arg(short, long)] path: PathBuf },
     Chat { #[arg(short, long)] msg: String },
     Screenshot,
+    Download { #[arg(short, long)] name: String },
     Shutdown,
 }
 
@@ -34,7 +35,7 @@ async fn main() -> anyhow::Result<()> {
     let transport = client.connect(&cli.server, &cli.domain).await?;
     let mut framed = Framed::new(transport, SentinelCodec::new());
 
-    match cli.command {
+    match &cli.command {
         Commands::Status => {
             framed.send(Frame::new(1, 0x01, vec![].into())?).await?;
         }
@@ -47,10 +48,13 @@ async fn main() -> anyhow::Result<()> {
             framed.send(Frame::new(1, 0x03, payload.into())?).await?;
         }
         Commands::Chat { msg } => {
-            framed.send(Frame::new(1, 0x05, msg.into_bytes().into())?).await?;
+            framed.send(Frame::new(1, 0x05, msg.as_bytes().to_vec().into())?).await?;
         }
         Commands::Screenshot => {
             framed.send(Frame::new(1, 0x07, vec![].into())?).await?;
+        }
+        Commands::Download { name } => {
+            framed.send(Frame::new(1, 0x08, name.as_bytes().to_vec().into())?).await?;
         }
         Commands::Shutdown => {
             framed.send(Frame::new(1, 0x99, vec![].into())?).await?;
@@ -58,12 +62,23 @@ async fn main() -> anyhow::Result<()> {
     }
 
     if let Some(Ok(response)) = framed.next().await {
-        if response.flags() == 0x07 && response.payload().len() > 100 {
-            let name = format!("remote_snap_{}.png", Uuid::new_v4());
-            std::fs::write(&name, response.payload())?;
-            println!("SUCCESS: Screenshot saved as {}", name);
-        } else {
-            println!("SERVER_RESPONSE: {}", String::from_utf8_lossy(response.payload()));
+        let flags = response.flags();
+        match flags {
+            0x07 => {
+                let name = format!("remote_snap_{}.png", Uuid::new_v4());
+                std::fs::write(&name, response.payload())?;
+                println!("SUCCESS: Screenshot saved as {}", name);
+            },
+            0x08 => {
+                if let Commands::Download { name } = &cli.command {
+                    let save_name = format!("dl_{}", name);
+                    std::fs::write(&save_name, response.payload())?;
+                    println!("SUCCESS: File downloaded and saved as {}", save_name);
+                }
+            },
+            _ => {
+                println!("SERVER_RESPONSE: {}", String::from_utf8_lossy(response.payload()));
+            }
         }
     }
     Ok(())

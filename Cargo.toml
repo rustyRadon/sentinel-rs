@@ -5,7 +5,7 @@ members = [
     "crates/sentinel-protocol",
     "crates/server",
     "crates/client",
-    "crates/bench",
+    "crates/bench", "crates/sentinel-crypto",
 ]
 
 [workspace.package]

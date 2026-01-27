@@ -145,3 +145,10 @@ mod tests {
         assert!(id.verify(message, &signature));
     }
 }
+
+// - generate()          // New identity
+// - load_or_generate()  // Load or create
+// - node_id()           // Hex identifier  
+// - public_key()        // Get public key
+// - sign() / verify()   // Crypto operations
+// - save()              // Persist to disk

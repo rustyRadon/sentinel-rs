@@ -5,15 +5,12 @@ edition.workspace = true
 authors.workspace = true
 
 [dependencies]
-# Use EXACT version to avoid conflicts
 ed25519-dalek = { version = "2.1", features = ["rand_core", "zeroize", "pkcs8"] }
 anyhow = "1.0"
 hex = "0.4"
 rand = "0.8"
 bs58 = "0.5"
 multihash = "0.19"
-
-# Add zeroize with proper features
 zeroize = { version = "1.8", features = ["derive", "zeroize_derive"] }
 
 [dev-dependencies]

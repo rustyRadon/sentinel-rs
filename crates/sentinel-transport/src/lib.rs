@@ -5,12 +5,14 @@ pub mod acceptor;
 pub mod error;
 pub mod metrics;
 pub mod state;
+pub mod connector;
 
 pub use acceptor::SentinelAcceptor;
 pub use error::{TransportError, TransportResult};
 pub use tcp::RawTcpTransport;
 pub use tls::TlsTransport;
 pub use state::{Connection, Unauthenticated};
+pub use connector::SentinelConnector;
 
 use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};

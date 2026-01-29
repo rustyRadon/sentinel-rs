@@ -1,138 +1,87 @@
-use anyhow::{Context, Result};
-use futures::StreamExt;
-use mdns_sd::{ServiceDaemon, ServiceEvent, ServiceInfo};
+mod engine;
+mod discovery;
+mod handlers;
+
+use anyhow::Result;
+use std::sync::Arc;
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::mpsc;
 use tokio_util::codec::Framed;
-
-use sentinel_crypto::NodeIdentity;
+use futures::{StreamExt, SinkExt};
 use sentinel_protocol::{
-    messages::{MessageContent, SentinelMessage},
-    SentinelCodec,
+    SentinelCodec, 
+    frame::Frame, 
+    messages::SentinelMessage
 };
-use sentinel_transport::SentinelAcceptor;
-
-struct SentinelNode {
-    identity: NodeIdentity,
-    acceptor: SentinelAcceptor,
-    db: sled::Db,
-    mdns: ServiceDaemon,
-}
-
-impl SentinelNode {
-    async fn new(data_dir: PathBuf) -> Result<Self> {
-        let identity = NodeIdentity::load_or_generate(data_dir.join("identity.key"))?;
-        let db = sled::open(data_dir.join("storage.db"))?;
-
-        // setup TLS Transport
-        let acceptor = SentinelAcceptor::new(
-            &data_dir.join("node.crt"),
-            &data_dir.join("node.key"),
-            Duration::from_secs(10),
-        )?;
-
-        let mdns = ServiceDaemon::new().context("Failed to create mDNS daemon")?;
-
-        Ok(Self {
-            identity,
-            acceptor,
-            db,
-            mdns,
-        })
-    }
-
-    fn persist_message(&self, msg: &SentinelMessage) -> Result<()> {
-        let tree = self.db.open_tree("messages")?;
-        let key = format!("{}:{}", msg.timestamp, msg.sender);
-        tree.insert(key, msg.to_bytes())?;
-        tree.flush()?;
-        Ok(())
-    }
-
-    fn print_history(&self) -> Result<()> {
-        println!("--- RECENT HISTORY ---");
-        if let Ok(tree) = self.db.open_tree("messages") {
-            for item in tree.iter().values().rev().take(10) {
-                if let Ok(bytes) = item {
-                    if let Ok(msg) = SentinelMessage::from_bytes(&bytes) {
-                        if let MessageContent::Chat(text) = msg.content {
-                            println!("[{}] {}", msg.sender, text);
-                        }
-                    }
-                }
-            }
-        }
-        println!("----------------------");
-        Ok(())
-    }
-
-    fn start_discovery(&self, port: u16) -> Result<()> {
-        let mdns = self.mdns.clone();
-        let node_id = self.identity.node_id();
-        let service_type = "_sentinel._tcp.local.";
-        
-        // register this node so others find .......
-        let instance_name = format!("{}.sentinel", node_id);
-        let my_service = ServiceInfo::new(
-            service_type,
-            &instance_name,
-            "sentinel-node.local.",
-            "",
-            port,
-            None,
-        )?;
-        mdns.register(my_service)?;
-
-        // Browse for other nodes
-        let receiver = mdns.browse(service_type)?;
-        tokio::spawn(async move {
-            while let Ok(event) = receiver.recv_async().await {
-                if let ServiceEvent::ServiceResolved(info) = event {
-                    println!("mDNS: Discovered Peer -> {}", info.get_fullname());
-                    // will pass this info to a 'connect' function
-                }
-            }
-        });
-
-        Ok(())
-    }
-
-    async fn run(&self, addr: &str, port: u16) -> Result<()> {
-        rustls::crypto::aws_lc_rs::default_provider()
-            .install_default()
-            .ok(); 
-
-        self.print_history()?;
-        self.start_discovery(port)?;
-
-        let listener = TcpListener::bind(addr).await?;
-        println!("SENTINEL ACTIVE | ID: {} | ADDR: {}", self.identity.node_id(), addr);
-
-        loop {
-            let (stream, _peer_addr) = listener.accept().await?;
-            let acceptor = self.acceptor.clone();
-            let db = self.db.clone();
-
-            tokio::spawn(async move {
-                if let Ok(tls) = acceptor.accept(stream).await {
-                    let mut framed = Framed::new(tls, SentinelCodec::new());
-                    while let Some(Ok(frame)) = framed.next().await {
-                        if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
-                            if let MessageContent::Chat(text) = &msg.conte
-                                let tree = db.open_tree("messages").unwrap();
-                                tree.insert(format!("{}:{}", msg.timestamp, msg.sender), msg.to_bytes()).unwrap();
-                            }
-                        }
-                    }
-                }
-            });
-        }
-    }
-}
+use crate::engine::SentinelNode;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let node = SentinelNode::new(PathBuf::from("./.sentinel")).await?;
-    node.run("0.0.0.0:8443", 8443).await
+    // 1. Initialize Crypto Provider
+    rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
+
+    // 2. Initialize Node State
+    let node = Arc::new(SentinelNode::new(PathBuf::from("./.sentinel")).await?);
+    
+    // 3. UI/Startup tasks
+    node.print_history()?;
+    node.start_discovery(8443)?;
+
+    let stdin_node = Arc::clone(&node);
+    tokio::spawn(async move {
+        if let Err(e) = handlers::spawn_stdin_handler(stdin_node).await {
+            eprintln!("Keyboard error: {}", e);
+        }
+    });
+
+    // 4. Server Loop (Passive Listening)
+    let listener = TcpListener::bind("0.0.0.0:8443").await?;
+    println!("LISTENING ON 8443...");
+
+    loop {
+        let (stream, _) = listener.accept().await?;
+        let acceptor = node.acceptor.clone();
+        let node_inner = Arc::clone(&node);
+
+        tokio::spawn(async move {
+            if let Ok(tls) = acceptor.accept(stream).await {
+                let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
+                
+                let (tx, mut rx) = mpsc::unbounded_channel::<SentinelMessage>();
+                let mut peer_id = String::from("unknown");
+
+                // Task for SENDING messages to this specific connection
+                let send_task = tokio::spawn(async move {
+                    while let Some(msg) = rx.recv().await {
+                        if let Ok(frame) = Frame::new(1, 0, bytes::Bytes::from(msg.to_bytes())) {
+                            if let Err(e) = sink.send(frame).await {
+                                eprintln!("Failed to send to peer: {}", e);
+                                break;
+                            }
+                        }
+                    }
+                });
+
+                // Loop for RECEIVING messages from this specific connection
+                while let Some(Ok(frame)) = stream.next().await {
+                    if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
+                        if peer_id == "unknown" {
+                            peer_id = msg.sender.clone();
+                            node_inner.peers.insert(peer_id.clone(), tx.clone());
+                            println!("Peer identified: {}", peer_id);
+                        }
+
+                        // {:?} used here to fix formatting error
+                        println!("[{}] {:?}", msg.sender, msg.content);
+                        let _ = node_inner.persist_message(&msg);
+                    }
+                }
+                
+                println!("Peer disconnected: {}", peer_id);
+                node_inner.peers.remove(&peer_id);
+                send_task.abort();
+            }
+        });
+    }
 }

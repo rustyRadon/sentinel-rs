@@ -1,28 +1,24 @@
-# Sentinel Protocol Specification (V1)
+# Sentinel Protocol Specification
 
-## 1. Framing (Binary)
-All communication uses a fixed-header binary frame to ensure memory safety and fast parsing.
+## 1. Framing
+Sentinel uses a length-prefixed binary framing mechanism to prevent "split-packet" issues in TCP.
 
-| Offset | Field | Size | Description |
+| Field | Size | Type | Description |
 | :--- | :--- | :--- | :--- |
-| 0 | MAGIC | 4B | Always `SNTL` |
-| 4 | VERSION | 1B | Protocol version (Currently 1) |
-| 5 | FLAGS | 1B | Bitmask for message priority/type |
-| 6 | LENGTH | 4B | Payload size (Big-Endian) |
-| 10 | PAYLOAD | var | The serialized `SentinelMessage` |
-| 10+N | CRC32 | 4B | Checksum of Version + Flags + Payload |
+| MAGIC | 4B | `[u8; 4]` | Always `0x53 0x4E 0x54 0x4C` ("SNTL") |
+| VERSION| 1B | `u8` | Current Version: `0x01` |
+| LENGTH | 4B | `u32` | Size of the following payload (Big-Endian) |
+| PAYLOAD| Var | `bytes` | Bincode-serialized `SentinelMessage` |
+| CRC32  | 4B | `u32` | Integrity check of the payload |
 
-## 2. Message Schema (Serialization)
-The payload is serialized using **Bincode** for minimal overhead.
+## 2. Serialization (Bincode)
+The payload follows this logical structure:
+- `id`: UUID (16 bytes)
+- `sender`: String (Public key fingerprint)
+- `timestamp`: u64 (Unix nanos)
+- `content`: Enum (Chat, Ping, Handshake)
 
-### Message Structure:
-* `id`: UUID (Used for deduplication/idempotency).
-* `sender`: String (The Public Key Hash/Node ID).
-* `timestamp`: u64 (Unix nanos for causal ordering).
-* `content`: Enum (Chat, Handshake, Ping, Pong).
-
-## 3. Handshake Sequence
-1. **TCP Connection**: Peer A connects to Peer B.
-2. **TLS Upgrade**: Negotiate `sentinel-v1` via ALPN.
-3. **Identity Exchange**: Both peers send a `Handshake` frame containing their Public Key.
-4. **Verification**: Peers verify that the TLS certificate matches the signed Handshake.
+## 3. Security Handshake
+1. **TCP**: Handshake on port 8443.
+2. **ALPN**: Negotiation of `sentinel-v1`.
+3. **mTLS**: Optional mutual authentication via X.509.

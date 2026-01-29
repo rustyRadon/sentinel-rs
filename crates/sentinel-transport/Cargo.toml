@@ -13,3 +13,4 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 anyhow = { workspace = true }
 tracing = { workspace = true }
+rustls-native-certs = "0.8.3"

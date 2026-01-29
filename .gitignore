@@ -1,24 +1,31 @@
-# Rust build artifacts
+# --- Compilation ---
 /target/
 **/*.rs.bk
 
-# Security - NEVER push your private keys
-certs/*.key
-certs/*.pem
-!certs/*.crt
-/target
+# --- Sentinel Node Data (Crucial) ---
+# We ignore the entire .sentinel folder because it contains:
+# 1. identity.key (Private!)
+# 2. storage.db (Local history)
+# 3. node.key (TLS Private key)
 .sentinel/
 *.db
 *.key
-*.crt
 
-# IDEs and OS files
+# --- Certificates ---
+# We keep the public .crt so nodes can trust each other,
+# but we never push .key or .pem (which often contain keys)
+certs/*.key
+certs/*.pem
+!certs/*.crt
+node.key
+node.crt
+
+# --- IDEs and OS ---
 .vscode/
 .idea/
 .DS_Store
 *.swp
-
-# Environment files
 .env
 
-/uploads
+# --- Project Specific ---
+/uploads/

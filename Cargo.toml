@@ -3,14 +3,12 @@ resolver = "2"
 members = [
     "crates/sentinel-transport",
     "crates/sentinel-protocol",
-    "crates/server",
-    "crates/client",
     "crates/bench", "crates/sentinel-crypto", "crates/sentinel-node",
 ]
 
 [workspace.package]
 version = "0.1.0"
-edition = "2025"
+edition = "2021"
 authors = ["Abdulrahman Hassan <hassantech.1111@gmail.com>"]
 
 [workspace.dependencies]

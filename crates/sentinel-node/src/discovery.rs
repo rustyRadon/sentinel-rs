@@ -23,7 +23,6 @@ impl SentinelNode {
                 if let ServiceEvent::ServiceResolved(info) = event {
                     let name = info.get_fullname();
                     
-                    // Prevent connecting to our own mDNS broadcast
                     if name.contains(&node_id) { continue; }
 
                     let addr_list = info.get_addresses().clone();
@@ -36,7 +35,6 @@ impl SentinelNode {
                         let node_to_dial = Arc::clone(&node_inner);
                         tokio::spawn(async move {
                             if let Err(e) = node_to_dial.dial_peer(target).await {
-                                // Silent error if peer is already connected or offline
                                 eprintln!("Dial error: {}", e);
                             }
                         });

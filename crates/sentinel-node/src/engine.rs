@@ -52,7 +52,6 @@ impl SentinelNode {
         
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
 
-        // 1. Send Handshake
         let handshake = SentinelMessage {
             id: Uuid::new_v4(),
             sender: self.identity.node_id(),
@@ -63,11 +62,9 @@ impl SentinelNode {
         let frame = Frame::new(1, 0, bytes::Bytes::from(handshake.to_bytes()))?;
         sink.send(frame).await?;
 
-        // 2. Setup Peer Channel
         let (tx, mut rx) = mpsc::unbounded_channel();
         self.peers.insert(addr.clone(), tx);
 
-        // 3. Outgoing Message Task
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Ok(f) = Frame::new(1, 0, bytes::Bytes::from(msg.to_bytes())) {
@@ -76,12 +73,10 @@ impl SentinelNode {
             }
         });
 
-        // 4. Incoming Message Task
         let node_inner = Arc::clone(&self);
         tokio::spawn(async move {
             while let Some(Ok(frame)) = stream.next().await {
                 if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
-                    // Use {:?} here for MessageContent formatting
                     println!("[{}] {:?}", msg.sender, msg.content);
                     let _ = node_inner.persist_message(&msg);
                 }
@@ -111,7 +106,7 @@ impl SentinelNode {
                 }
             }
         }
-        println!("----------------------");
+        println!("------SNTL----------");
         Ok(())
     }
 }

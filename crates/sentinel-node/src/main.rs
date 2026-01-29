@@ -18,13 +18,10 @@ use crate::engine::SentinelNode;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    // 1. Initialize Crypto Provider
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
-    // 2. Initialize Node State
     let node = Arc::new(SentinelNode::new(PathBuf::from("./.sentinel")).await?);
     
-    // 3. UI/Startup tasks
     node.print_history()?;
     node.start_discovery(8443)?;
 
@@ -35,7 +32,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 4. Server Loop (Passive Listening)
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     println!("LISTENING ON 8443...");
 
@@ -51,7 +47,6 @@ async fn main() -> Result<()> {
                 let (tx, mut rx) = mpsc::unbounded_channel::<SentinelMessage>();
                 let mut peer_id = String::from("unknown");
 
-                // Task for SENDING messages to this specific connection
                 let send_task = tokio::spawn(async move {
                     while let Some(msg) = rx.recv().await {
                         if let Ok(frame) = Frame::new(1, 0, bytes::Bytes::from(msg.to_bytes())) {
@@ -63,7 +58,6 @@ async fn main() -> Result<()> {
                     }
                 });
 
-                // Loop for RECEIVING messages from this specific connection
                 while let Some(Ok(frame)) = stream.next().await {
                     if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
                         if peer_id == "unknown" {
@@ -72,7 +66,6 @@ async fn main() -> Result<()> {
                             println!("Peer identified: {}", peer_id);
                         }
 
-                        // {:?} used here to fix formatting error
                         println!("[{}] {:?}", msg.sender, msg.content);
                         let _ = node_inner.persist_message(&msg);
                     }

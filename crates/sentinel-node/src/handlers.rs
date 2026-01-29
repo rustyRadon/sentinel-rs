@@ -18,14 +18,11 @@ pub async fn spawn_stdin_handler(node: Arc<SentinelNode>) -> Result<()> {
             content: MessageContent::Chat(line.clone()),
         };
 
-        // 1. Save locally
         node.persist_message(&msg)?;
 
-        // 2. Broadcast to all connected peers
         for peer in node.peers.iter() {
             let sender = peer.value();
             if let Err(_) = sender.send(msg.clone()) {
-                // If send fails, the peer might be disconnected
             }
         }
 

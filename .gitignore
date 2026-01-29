@@ -6,6 +6,11 @@
 certs/*.key
 certs/*.pem
 !certs/*.crt
+/target
+.sentinel/
+*.db
+*.key
+*.crt
 
 # IDEs and OS files
 .vscode/

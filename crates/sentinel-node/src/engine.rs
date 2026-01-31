@@ -85,7 +85,10 @@ impl SentinelNode {
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Ok(f) = Frame::new(1, 0, msg.to_bytes().into()) {
-                    if sink.send(f).await.is_err() { break; }
+                    if let Err(e) = sink.send(f).await {
+                        eprintln!("Write error to {}: {}", addr_out, e);
+                        break; 
+                    }
                 }
             }
         });
@@ -99,6 +102,7 @@ impl SentinelNode {
                 }
             }
             node_inner.peers.remove(&addr_in);
+            println!("Connection closed: {}", addr_in);
         });
         Ok(())
     }

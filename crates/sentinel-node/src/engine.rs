@@ -5,7 +5,7 @@ use dashmap::DashMap;
 use tokio::sync::{mpsc, Mutex};
 use uuid::Uuid;
 use std::sync::Arc;
-use futures::{StreamExt, SinkExt};
+use futures::{StreamExt, SinkExt, future::{BoxFuture, FutureExt}}; 
 use tokio_util::codec::Framed;
 use lru::LruCache;
 
@@ -49,39 +49,56 @@ impl SentinelNode {
         Ok(Self { identity, acceptor, db, mdns, peers: DashMap::new(), seen_messages })
     }
 
-    pub async fn handle_incoming_message(self: Arc<Self>, msg: SentinelMessage, addr: String) -> Result<()> {
-        {
-            let mut seen = self.seen_messages.lock().await;
-            if seen.contains(&msg.id) { return Ok(()); }
-            seen.put(msg.id, ());
-        }
+    /// handles incoming messages. 
+    /// returns BoxFuture to break the async recursion cycle with dial_peer.
+    pub fn handle_incoming_message(self: Arc<Self>, msg: SentinelMessage, addr: String) -> BoxFuture<'static, Result<()>> {
+        let node = self.clone();
+        async move {
+            {
+                let mut seen = node.seen_messages.lock().await;
+                if seen.contains(&msg.id) { return Ok(()); }
+                seen.put(msg.id, ());
+            }
 
-        match msg.content {
-            MessageContent::Chat(ref text) => {
-                println!("[{}] (Chat): {}", msg.sender, text);
-                let _ = self.persist_message(&msg);
+            match msg.content {
+                MessageContent::Chat(ref text) => {
+                    println!("[{}] (Chat): {}", msg.sender, text);
+                    let _ = node.persist_message(&msg);
 
-                // FLOOD RELAY: Send to all peers except the one we received it from
-                for entry in self.peers.iter() {
-                    let peer_addr = entry.key();
-                    if peer_addr != &addr {
-                        let _ = entry.value().tx.send(msg.clone());
+                    for entry in node.peers.iter() {
+                        let peer_addr = entry.key();
+                        if peer_addr != &addr {
+                            let _ = entry.value().tx.send(msg.clone());
+                        }
                     }
                 }
-            }
-            MessageContent::PeerDiscovery(ref new_peers) => {
-                for peer in new_peers {
-                    if peer.node_id != self.identity.node_id() && !self.peers.contains_key(&peer.address.to_string()) {
-                        println!("Discovered potential peer via gossip: {} at {}", peer.node_name, peer.address);
+                MessageContent::PeerDiscovery(ref new_peers) => {
+                    for peer in new_peers {
+                        let addr_str = peer.address.to_string();
+
+                        if peer.node_id == node.identity.node_id() {
+                            continue;
+                        }
+
+                        if !node.peers.contains_key(&addr_str) {
+                            println!("Auto-connecting to discovered peer: {} ({})", peer.node_name, addr_str);
+                            
+                            let node_clone = Arc::clone(&node);
+                            tokio::spawn(async move {
+                                if let Err(e) = node_clone.dial_peer(addr_str).await {
+                                    eprintln!("Failed to autoconnect: {}", e);
+                                }
+                            });
+                        }
                     }
                 }
+                MessageContent::Ping => {
+                    let _ = node.send_to_peer(&addr, MessageContent::Pong).await;
+                }
+                _ => {}
             }
-            MessageContent::Ping => {
-                let _ = self.send_to_peer(&addr, MessageContent::Pong).await;
-            }
-            _ => {}
-        }
-        Ok(())
+            Ok(())
+        }.boxed() 
     }
 
     pub async fn dial_peer(self: Arc<Self>, addr: String) -> Result<()> {
@@ -90,13 +107,11 @@ impl SentinelNode {
         let tls = connector.connect("sentinel-node.local", stream).await?;
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
 
-        // Send Handshake
         let handshake = SentinelMessage::new(self.identity.node_id(), MessageContent::Chat("v2-dial".into()));
         sink.send(Frame::new(1, 0, handshake.to_bytes().into())?).await?;
 
         let (tx, mut rx) = mpsc::unbounded_channel();
         
-        // Initial insert (we'll update metadata once we get the first message)
         self.peers.insert(addr.clone(), PeerState {
             tx,
             node_id: "pending".into(),
@@ -108,9 +123,9 @@ impl SentinelNode {
             while let Some(msg) = rx.recv().await {
                 if let Ok(f) = Frame::new(1, 0, msg.to_bytes().into()) {
                     if let Err(e) = sink.send(f).await {
-                    eprintln!("Write error to peer {}: {}", addr_out, e);
-                    break; 
-                }
+                        eprintln!("Write error to peer {}: {}", addr_out, e);
+                        break; 
+                    }
                 }
             }
         });
@@ -120,7 +135,6 @@ impl SentinelNode {
         tokio::spawn(async move {
             while let Some(Ok(frame)) = stream.next().await {
                 if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
-                    // Update peer metadata on first contact
                     if let Some(mut peer) = node_inner.peers.get_mut(&addr_in) {
                         if peer.node_id == "pending" {
                             peer.node_id = msg.sender.clone();

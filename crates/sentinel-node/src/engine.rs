@@ -18,12 +18,19 @@ use sentinel_protocol::{
 use sentinel_transport::{SentinelAcceptor, SentinelConnector};
 use mdns_sd::ServiceDaemon;
 
+/// Metadata for a connected peer
+pub struct PeerState {
+    pub tx: mpsc::UnboundedSender<SentinelMessage>,
+    pub node_id: String,
+    pub node_name: String,
+}
+
 pub struct SentinelNode {
     pub identity: NodeIdentity,
     pub acceptor: SentinelAcceptor,
     pub db: sled::Db,
     pub mdns: ServiceDaemon,
-    pub peers: DashMap<String, mpsc::UnboundedSender<SentinelMessage>>,
+    pub peers: DashMap<String, PeerState>,
     pub seen_messages: Mutex<LruCache<Uuid, ()>>,
 }
 
@@ -52,12 +59,20 @@ impl SentinelNode {
         match msg.content {
             MessageContent::Chat(ref text) => {
                 println!("[{}] (Chat): {}", msg.sender, text);
-                self.persist_message(&msg)?;
+                let _ = self.persist_message(&msg);
+
+                // FLOOD RELAY: Send to all peers except the one we received it from
+                for entry in self.peers.iter() {
+                    let peer_addr = entry.key();
+                    if peer_addr != &addr {
+                        let _ = entry.value().tx.send(msg.clone());
+                    }
+                }
             }
             MessageContent::PeerDiscovery(ref new_peers) => {
                 for peer in new_peers {
-                    if peer.node_id != self.identity.node_id() {
-                        println!("Gossip discovery: {} at {}", peer.node_name, peer.address);
+                    if peer.node_id != self.identity.node_id() && !self.peers.contains_key(&peer.address.to_string()) {
+                        println!("Discovered potential peer via gossip: {} at {}", peer.node_name, peer.address);
                     }
                 }
             }
@@ -75,20 +90,24 @@ impl SentinelNode {
         let tls = connector.connect("sentinel-node.local", stream).await?;
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
 
+        // Send Handshake
         let handshake = SentinelMessage::new(self.identity.node_id(), MessageContent::Chat("v2-dial".into()));
         sink.send(Frame::new(1, 0, handshake.to_bytes().into())?).await?;
 
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.peers.insert(addr.clone(), tx);
+        
+        // Initial insert (we'll update metadata once we get the first message)
+        self.peers.insert(addr.clone(), PeerState {
+            tx,
+            node_id: "pending".into(),
+            node_name: "new-peer".into(),
+        });
 
         let addr_out = addr.clone();
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Ok(f) = Frame::new(1, 0, msg.to_bytes().into()) {
-                    if let Err(e) = sink.send(f).await {
-                        eprintln!("Write error to {}: {}", addr_out, e);
-                        break; 
-                    }
+                    if let Err(_) = sink.send(f).await { break; }
                 }
             }
         });
@@ -98,6 +117,12 @@ impl SentinelNode {
         tokio::spawn(async move {
             while let Some(Ok(frame)) = stream.next().await {
                 if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
+                    // Update peer metadata on first contact
+                    if let Some(mut peer) = node_inner.peers.get_mut(&addr_in) {
+                        if peer.node_id == "pending" {
+                            peer.node_id = msg.sender.clone();
+                        }
+                    }
                     let _ = node_inner.clone().handle_incoming_message(msg, addr_in.clone()).await;
                 }
             }
@@ -112,10 +137,11 @@ impl SentinelNode {
         loop {
             interval.tick().await;
             let peer_list: Vec<PeerInfo> = self.peers.iter().filter_map(|entry| {
+                let state = entry.value();
                 entry.key().parse().ok().map(|addr| PeerInfo {
-                    node_id: "unknown".into(),
+                    node_id: state.node_id.clone(),
                     address: addr,
-                    node_name: "mesh-node".into(),
+                    node_name: state.node_name.clone(),
                     last_seen: 0,
                 })
             }).collect();
@@ -123,15 +149,15 @@ impl SentinelNode {
             if !peer_list.is_empty() {
                 let msg = MessageContent::PeerDiscovery(peer_list);
                 for entry in self.peers.iter() {
-                    let _ = self.send_to_peer(entry.key(), msg.clone()).await;
+                    let _ = entry.value().tx.send(SentinelMessage::new(self.identity.node_id(), msg.clone()));
                 }
             }
         }
     }
 
     pub async fn send_to_peer(&self, addr: &str, content: MessageContent) -> Result<()> {
-        if let Some(tx) = self.peers.get(addr) {
-            tx.send(SentinelMessage::new(self.identity.node_id(), content))?;
+        if let Some(peer) = self.peers.get(addr) {
+            peer.tx.send(SentinelMessage::new(self.identity.node_id(), content))?;
         }
         Ok(())
     }

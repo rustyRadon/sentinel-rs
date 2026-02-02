@@ -57,7 +57,11 @@ async fn main() -> Result<()> {
                     if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
                         if peer_id == "unknown" {
                             peer_id = msg.sender.clone();
-                            node_inner.peers.insert(addr_str.clone(), tx.clone());
+                            node_inner.peers.insert(addr_str.clone(), engine::PeerState {
+                            tx: tx.clone(),
+                            node_id: peer_id.clone(),
+                            node_name: "Inbound-Peer".into(),
+                        });
                         }
                         let _ = node_inner.clone().handle_incoming_message(msg, addr_str.clone()).await;
                     }

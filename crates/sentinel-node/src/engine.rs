@@ -107,7 +107,10 @@ impl SentinelNode {
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if let Ok(f) = Frame::new(1, 0, msg.to_bytes().into()) {
-                    if let Err(_) = sink.send(f).await { break; }
+                    if let Err(e) = sink.send(f).await {
+                    eprintln!("Write error to peer {}: {}", addr_out, e);
+                    break; 
+                }
                 }
             }
         });

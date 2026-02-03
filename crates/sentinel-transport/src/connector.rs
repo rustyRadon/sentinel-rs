@@ -4,15 +4,15 @@ use tokio_rustls::{TlsConnector, client::TlsStream};
 use rustls::{ClientConfig, pki_types::ServerName};
 use anyhow::Result;
 
-// --- 1. The Custom Verifier ---
+//  Custom Verifier
 #[derive(Debug)]
 struct DangerVerifier;
 
 impl rustls::client::danger::ServerCertVerifier for DangerVerifier {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>, // Changed to CertificateDer
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>], // Changed to CertificateDer
+        _end_entity: &rustls::pki_types::CertificateDer<'_>, 
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>], 
         _server_name: &ServerName,
         _ocsp_response: &[u8],
         _now: rustls::pki_types::UnixTime,
@@ -23,7 +23,7 @@ impl rustls::client::danger::ServerCertVerifier for DangerVerifier {
     fn verify_tls12_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>, // Changed to CertificateDer
+        _cert: &rustls::pki_types::CertificateDer<'_>, 
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -32,7 +32,7 @@ impl rustls::client::danger::ServerCertVerifier for DangerVerifier {
     fn verify_tls13_signature(
         &self,
         _message: &[u8],
-        _cert: &rustls::pki_types::CertificateDer<'_>, // Changed to CertificateDer
+        _cert: &rustls::pki_types::CertificateDer<'_>,
         _dss: &rustls::DigitallySignedStruct,
     ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
         Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
@@ -46,12 +46,12 @@ impl rustls::client::danger::ServerCertVerifier for DangerVerifier {
             RSA_PSS_SHA256,
             RSA_PSS_SHA384,
             RSA_PSS_SHA512,
-            ED25519, // This is the one your NodeIdentity uses!
+            ED25519, 
         ]
     }
 }
 
-// --- 2. The Connector ---
+// connector 
 pub struct SentinelConnector {
     config: Arc<ClientConfig>,
 }

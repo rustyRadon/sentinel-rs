@@ -1,7 +1,6 @@
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 use std::net::SocketAddr;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PeerInfo {
@@ -26,9 +25,11 @@ pub enum MessageContent {
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct SentinelMessage {
     pub id: Uuid,           
-    pub sender: String,     
+    pub sender: String,  
+    pub public_key: Vec<u8>,   
     pub timestamp: u64,     
     pub content: MessageContent,
+    pub signature: Vec<u8>,
 }
 
 impl SentinelMessage {
@@ -36,12 +37,22 @@ impl SentinelMessage {
         Self {
             id: Uuid::new_v4(),
             sender,
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_default()
+            public_key: vec![],
+            timestamp: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
                 .as_secs(),
             content,
+            signature: vec![],
         }
+    }
+
+    pub fn sig_hash(&self) -> Vec<u8> {
+        let mut data = self.id.as_bytes().to_vec();
+        data.extend_from_slice(self.sender.as_bytes());
+        data.extend_from_slice(&self.timestamp.to_le_bytes());
+        data.extend_from_slice(&bincode::serialize(&self.content).unwrap_or_default());
+        data
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {

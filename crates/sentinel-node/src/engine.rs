@@ -35,18 +35,51 @@ pub struct SentinelNode {
 }
 
 impl SentinelNode {
-    pub async fn new(data_dir: PathBuf) -> Result<Self> {
+pub async fn new(data_dir: PathBuf) -> Result<Self> {
+        if !data_dir.exists() {
+            std::fs::create_dir_all(&data_dir)?;
+        }
+
         let identity = NodeIdentity::load_or_generate(data_dir.join("identity.key"))?;
+        
         let db = sled::open(data_dir.join("storage.db"))?;
+
+        let cert_path = if data_dir.join("node.crt").exists() {
+            data_dir.join("node.crt")
+        } else {
+            PathBuf::from("certs/server.crt") 
+        };
+
+        let key_path = if data_dir.join("node.key").exists() {
+            data_dir.join("node.key")
+        } else {
+            PathBuf::from("certs/server.key")
+        };
+
+        if !cert_path.exists() || !key_path.exists() {
+            return Err(anyhow::anyhow!(
+                "TLS certificates not found in {:?} or project root. Please ensure node.crt and node.key exist.",
+                data_dir
+            ));
+        }
+
         let acceptor = SentinelAcceptor::new(
-            &data_dir.join("node.crt"),
-            &data_dir.join("node.key"),
+            &cert_path,
+            &key_path,
             Duration::from_secs(10),
         )?;
+
         let mdns = ServiceDaemon::new().context("Failed to start mDNS")?;
         let seen_messages = Mutex::new(LruCache::new(std::num::NonZeroUsize::new(1000).unwrap()));
 
-        Ok(Self { identity, acceptor, db, mdns, peers: DashMap::new(), seen_messages })
+        Ok(Self { 
+            identity, 
+            acceptor, 
+            db, 
+            mdns, 
+            peers: DashMap::new(), 
+            seen_messages 
+        })
     }
 
     /// handles incoming messages. 

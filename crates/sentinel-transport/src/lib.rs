@@ -14,11 +14,10 @@ pub use tls::TlsTransport;
 pub use state::{Connection, Unauthenticated};
 pub use connector::SentinelConnector;
 
-use async_trait::async_trait;
 use tokio::io::{AsyncRead, AsyncWrite};
 use std::net::SocketAddr;
 
-#[async_trait]
+/// The base trait for all Sentinel network communications.
 pub trait SentinelTransport: AsyncRead + AsyncWrite + Unpin + Send {
     /// Returns the remote address of the peer.
     fn peer_addr(&self) -> Result<SocketAddr, std::io::Error>;

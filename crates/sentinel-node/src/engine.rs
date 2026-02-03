@@ -110,7 +110,7 @@ impl SentinelNode {
     }
 
     pub async fn dial_peer(self: Arc<Self>, addr: String) -> Result<()> {
-        let connector = SentinelConnector::new(&PathBuf::from("certs/server.crt"))?;
+        let connector = SentinelConnector::new();
         let stream = tokio::net::TcpStream::connect(&addr).await?;
         let tls = connector.connect("sentinel-node.local", stream).await?;
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();

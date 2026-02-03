@@ -15,9 +15,9 @@ use sentinel_protocol::{
     messages::SentinelMessage
 };
 use crate::engine::SentinelNode;
-use clap::Parser; // 1. Add this import
+use clap::Parser; 
 
-// 2. Define the CLI arguments
+// CLI arguments
 #[derive(Parser)]
 struct Args {
     #[arg(short, long, default_value = "./.sentinel")]
@@ -31,14 +31,14 @@ struct Args {
 async fn main() -> Result<()> {
     rustls::crypto::aws_lc_rs::default_provider().install_default().ok();
 
-    // 3. Parse the arguments from the terminal
+    // parse arguments from the terminal
     let args = Args::parse();
 
-    // 4. Use the parsed data_dir and port
+    // use parsed data_dir and port
     let node = Arc::new(SentinelNode::new(args.data_dir).await?);
     node.print_history()?;
     
-    // Use the custom port for mDNS discovery
+    // use custom port for mDNS discovery
     node.start_discovery(args.port)?;
 
     let gossip_node = Arc::clone(&node);
@@ -47,7 +47,7 @@ async fn main() -> Result<()> {
     let stdin_node = Arc::clone(&node);
     tokio::spawn(async move { let _ = handlers::spawn_stdin_handler(stdin_node).await; });
 
-    // 5. Bind to the custom port
+    // bind to the custom port
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = TcpListener::bind(&addr).await?;
     println!("RUNNING ON {}", addr);

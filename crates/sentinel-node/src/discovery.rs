@@ -7,7 +7,7 @@ pub async fn start_discovery(node: Arc<SentinelNode>, port: u16) -> Result<()> {
     let service_type = "_sentinel._tcp.local.";
     let instance_name = format!("node-{}", &node.identity.node_id()[..8]);
     
-    // register this node so others can see usss
+    // register node so others can see usss
     let my_info = ServiceInfo::new(
         service_type,
         &instance_name,

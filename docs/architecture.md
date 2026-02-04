@@ -1,31 +1,34 @@
-# Sentinel V1: Decentralized Architecture
+# Sentinel Phase 2: Autonomous Mesh Architecture
 
-Sentinel V1 moves away from the Client-Server model toward a **Leaderless Replication** system (inspired by DDIA Chapter 5.4). Every node is an equal peer.
+Sentinel has evolved from a basic client-server model into a **Symmetric Peer-to-Peer Mesh**. In this architecture, there is no "Server" or "Client" role; every node acts as both a consumer and a provider of data.
 
-## 1. The Peer-to-Peer Model
-Unlike V0, where a client talks to a central server, V1 nodes form a **Partial Mesh Network**. 
-* **Replica Equality**: Every node stores a full copy of the chat history.
-* **Fault Tolerance**: If any node goes offline, the system continues.
-* **Eventual Consistency**: Nodes sync missed messages once they reconnect.
 
-## 2. Layered Node Stack
-Each node consists of four distinct layers:
 
-1. **Identity Layer (`sentinel-crypto`)**: 
-   - Uses Ed25519 keys for node identification.
-   - Provides digital signatures for message authenticity.
-2. **Transport Layer (`sentinel-transport`)**: 
-   - Secures the stream via TLS 1.3.
-   - Handles TCP connection pooling and handshakes.
-3. **Protocol Layer (`sentinel-protocol`)**:
-   - Frames raw bytes into structured packets.
-   - Handles CRC32 integrity checks.
-4. **Storage Layer (Sled DB)**:
-   - A Log-Structured storage engine.
-   - Persists messages and peer information to disk.
+## 1. The Trustless Mesh Model
+Sentinel Phase 2 implements a **Leaderless Mesh** with **Trust-on-First-Use (TOFU)** verification.
+* **Symmetric Handshaking**: Whether you dial out or receive an inbound connection, both parties perform an identical cryptographic identity exchange.
+* **Identity Pinning**: Nodes are identified by their Ed25519 Public Keys. Once a key is verified, it is "pinned" to that peer's address in the `DashMap` state.
+* **Autonomous Discovery**: Nodes use mDNS (Multicast DNS) to actively shout their presence and browse for others, removing the need for static IP configuration.
 
-## 3. Data Flow (The Write Path)
-1. **Local Write**: User types a message; it is saved to the local `sled` database.
-2. **Gossip/Broadcast**: The node iterates through all active peer connections.
-3. **Async Replication**: The message is sent as a `Frame` over TLS to all peers.
-4. **Peer Acknowledgment**: Remote peers receive, verify, and persist the message to their own `sled` instances.
+## 2. Updated Node Stack
+The node is now an integrated engine built on four specialized crates:
+
+1.  **Identity Layer (`sentinel-crypto`)**: 
+    - **Ed25519**: Generates high-entropy keypairs.
+    - **Deterministic ID**: Node IDs are hex-encoded fingerprints of the Public Key.
+2.  **Transport Layer (`sentinel-transport`)**: 
+    - **Danger-Verifier TLS**: Uses TLS 1.3 for wire-encryption while bypassing CA-checks to support P2P self-signed identities.
+    - **Asynchronous IO**: Powered by `tokio-rustls`.
+3.  **Protocol Layer (`sentinel-protocol`)**:
+    - **Length-Prefixed Framing**: Prevents TCP stream fragmentation.
+    - **Cryptographic Envelopes**: Every message is signed by the sender's private key.
+4.  **Engine & Storage Layer (`sentinel-node`)**:
+    - **Sled DB**: Embedded ACID-compliant database for message and peer persistence.
+    - **Gossip Service**: Periodically synchronizes state across the mesh.
+
+## 3. The Lifecycle of a Peer Connection
+1.  **Discovery**: `discovery.rs` hears an mDNS packet and triggers `engine::dial_peer`.
+2.  **Encryption**: `sentinel-transport` establishes an encrypted TLS 1.3 tunnel.
+3.  **Handshake**: Nodes exchange `MessageContent::Handshake` containing their Public Keys.
+4.  **Verification**: The Engine verifies the digital signature of the handshake. If valid, the peer is added to the active `DashMap`.
+5.  **Gossip**: The new peer receives a broadcast of any messages missed during downtime.

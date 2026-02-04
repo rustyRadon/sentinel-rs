@@ -29,3 +29,8 @@ node.crt
 
 # --- Project Specific ---
 /uploads/
+
+
+//cargo run --bin sentinel-node -- -d ./node1 -p 8081
+//cargo run --bin sentinel-node -- -d ./node2 -p 8082
+//cargo run --bin sentinel-node -- -d ./node3 -p 8083

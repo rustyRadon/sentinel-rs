@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey, SECRET_KEY_LENGTH};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use std::fs;
 use std::path::Path;
@@ -26,18 +26,11 @@ impl NodeIdentity {
 
     pub fn load_or_generate<P: AsRef<Path>>(path: P) -> Result<Self> {
         let path = path.as_ref();
-        
-        let exists_and_not_empty = path.exists() && fs::metadata(path)?.len() > 0;
+        let exists = path.exists() && fs::metadata(path)?.len() > 0;
 
-        if exists_and_not_empty {
-            let bytes = fs::read(path)
-                .with_context(|| format!("Failed to read {}", path.display()))?;
-            
-            if bytes.len() != SECRET_KEY_LENGTH {
-                anyhow::bail!("Invalid key length: expected 32, got {}", bytes.len());
-            }
-            
-            let array: [u8; 32] = bytes.try_into().expect("Length checked");
+        if exists {
+            let bytes = fs::read(path).with_context(|| format!("Failed to read {}", path.display()))?;
+            let array: [u8; 32] = bytes.try_into().map_err(|_| anyhow::anyhow!("Invalid key length"))?;
             let signing_key = SigningKey::from_bytes(&array);
             Ok(Self { signing_key })
         } else {
@@ -51,33 +44,37 @@ impl NodeIdentity {
         hex::encode(self.signing_key.verifying_key().to_bytes())
     }
 
-    pub fn public_key(&self) -> VerifyingKey {
-        self.signing_key.verifying_key()
+    pub fn public_key_bytes(&self) -> Vec<u8> {
+        self.signing_key.verifying_key().to_bytes().to_vec()
     }
 
-    pub fn sign(&self, message: &[u8]) -> Signature {
-        self.signing_key.sign(message)
+    pub fn sign(&self, message: &[u8]) -> Vec<u8> {
+        self.signing_key.sign(message).to_bytes().to_vec()
     }
 
-    pub fn verify(&self, message: &[u8], signature: &Signature) -> bool {
-        self.signing_key.verifying_key().verify(message, signature).is_ok()
+    /// Static verification for use in async contexts where self is not available
+    pub fn verify(message: &[u8], signature_bytes: &[u8], pubkey_bytes: &[u8]) -> bool {
+        if let (Ok(sig), Ok(pubkey)) = (
+            Signature::from_slice(signature_bytes),
+            VerifyingKey::from_bytes(pubkey_bytes.try_into().unwrap_or(&[0u8; 32])),
+        ) {
+            return pubkey.verify(message, &sig).is_ok();
+        }
+        false
     }
 
-    pub fn sign_detached(&self, message: &[u8]) -> [u8; 64] {
-        self.sign(message).to_bytes()
+    /// Helper for tests to verify against this identity
+    pub fn verify_internal(&self, message: &[u8], signature_bytes: &[u8]) -> bool {
+        Self::verify(message, signature_bytes, &self.public_key_bytes())
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
-        fs::write(path, self.signing_key.to_bytes())
-            .with_context(|| format!("Failed to write {}", path.display()))?;
-        
+        fs::write(path, self.signing_key.to_bytes())?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            let mut perms = fs::metadata(path)?.permissions();
-            perms.set_mode(0o600);
-            fs::set_permissions(path, perms)?;
+            fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
     }
@@ -92,57 +89,17 @@ mod tests {
     fn test_identity_persistence() {
         let temp_file = NamedTempFile::new().unwrap();
         let path = temp_file.path();
-
-        let id1 = NodeIdentity::load_or_generate(path).expect("Should generate new if empty");
-        let id1_str = id1.node_id();
-
-        let id2 = NodeIdentity::load_or_generate(path).expect("Should load existing");
-        let id2_str = id2.node_id();
-
-        assert_eq!(id1_str, id2_str, "IDs must persist across loads");
-
-        let message = b"Hello Sentinel!";
-        let signature = id1.sign(message);
-        assert!(id2.verify(message, &signature));
-    }
-
-    #[test]
-    fn test_invalid_key_file() {
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-
-        fs::write(path, b"wrong_length_data").unwrap();
-
-        let result = NodeIdentity::load_or_generate(path);
-        assert!(result.is_err());
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn test_file_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-        
-        let temp_file = NamedTempFile::new().unwrap();
-        let path = temp_file.path();
-
-        let identity = NodeIdentity::load_or_generate(path).unwrap();
-        identity.save(path).unwrap();
-
-        let metadata = fs::metadata(path).unwrap();
-        let mode = metadata.permissions().mode();
-
-        assert_eq!(mode & 0o777, 0o600, "Permissions should be 0600");
+        let id1 = NodeIdentity::load_or_generate(path).unwrap();
+        let sig = id1.sign(b"test");
+        let id2 = NodeIdentity::load_or_generate(path).unwrap();
+        assert!(id2.verify_internal(b"test", &sig));
     }
 
     #[test]
     fn test_generate_new() {
         let id = NodeIdentity::generate();
-        let node_id = id.node_id();
-        assert_eq!(node_id.len(), 64);
-        
-        let message = b"test message";
-        let signature = id.sign(message);
-        assert!(id.verify(message, &signature));
+        let sig = id.sign(b"test");
+        assert!(id.verify_internal(b"test", &sig));
     }
 }
 

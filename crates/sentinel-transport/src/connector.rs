@@ -1,39 +1,69 @@
 use std::sync::Arc;
 use tokio::net::TcpStream;
 use tokio_rustls::{TlsConnector, client::TlsStream};
-use rustls::{ClientConfig, RootCertStore, pki_types::ServerName};
-use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
-use anyhow::{Result, Context};
+use rustls::{ClientConfig, pki_types::ServerName};
+use anyhow::Result;
 
+//  Custom Verifier
+#[derive(Debug)]
+struct DangerVerifier;
+
+impl rustls::client::danger::ServerCertVerifier for DangerVerifier {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>, 
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>], 
+        _server_name: &ServerName,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>, 
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        use rustls::SignatureScheme::*;
+        vec![
+            ECDSA_NISTP256_SHA256,
+            ECDSA_NISTP384_SHA384,
+            RSA_PSS_SHA256,
+            RSA_PSS_SHA384,
+            RSA_PSS_SHA512,
+            ED25519, 
+        ]
+    }
+}
+
+// connector 
 pub struct SentinelConnector {
     config: Arc<ClientConfig>,
 }
 
 impl SentinelConnector {
-    pub fn new(cert_path: &Path) -> Result<Self> {
-        let mut root_store = RootCertStore::empty();
-        
-        // 1. Load native certificates
-        let native_certs = rustls_native_certs::load_native_certs();
-        for cert in native_certs.certs {
-            root_store.add(cert)?;
-        }
-        
-        // 2. Load our node certificate to trust peers in our network
-        let cert_file = File::open(cert_path).context("Failed to open node.crt")?;
-        let mut reader = BufReader::new(cert_file);
-        let certs = rustls_pemfile::certs(&mut reader);
-        for cert in certs {
-            root_store.add(cert?)?;
-        }
-
+    pub fn new() -> Self {
         let config = ClientConfig::builder()
-            .with_root_certificates(root_store)
-            .with_no_client_auth(); 
+            .dangerous()
+            .with_custom_certificate_verifier(Arc::new(DangerVerifier))
+            .with_no_client_auth();
 
-        Ok(Self { config: Arc::new(config) })
+        Self { config: Arc::new(config) }
     }
 
     pub async fn connect(&self, domain: &str, stream: TcpStream) -> Result<TlsStream<TcpStream>> {

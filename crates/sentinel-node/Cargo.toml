@@ -20,3 +20,5 @@ mdns-sd = "0.17.2"
 uuid = { version = "1.20.0", features = ["v4"] }
 dashmap = "6.1.0"
 bytes.workspace = true
+lru = "0.12"
+clap = { workspace = true, features = ["derive"] }

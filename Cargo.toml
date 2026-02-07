@@ -3,7 +3,7 @@ resolver = "2"
 members = [
     "crates/sentinel-transport",
     "crates/sentinel-protocol",
-    "crates/bench", "crates/sentinel-crypto", "crates/sentinel-node",
+    "crates/bench", "crates/sentinel-crypto", "crates/sentinel-node", "crates/sentinel-signaler", "crates/sentinel-signaler",
 ]
 
 [workspace.package]

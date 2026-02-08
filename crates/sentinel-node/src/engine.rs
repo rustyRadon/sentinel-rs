@@ -12,7 +12,7 @@ use lru::LruCache;
 use sentinel_crypto::NodeIdentity;
 use sentinel_protocol::{
     SentinelCodec, 
-    messages::{SentinelMessage, MessageContent, PeerInfo}
+    messages::{SentinelMessage, MessageContent, PeerInfo, SignalingMessage}
 };
 use sentinel_transport::{SentinelAcceptor, SentinelConnector};
 use mdns_sd::ServiceDaemon;
@@ -53,6 +53,43 @@ impl SentinelNode {
         let _ = tx.send(msg);
     }
 
+    pub async fn start_signaler_client(self: Arc<Self>, signaler_addr: String) {
+        loop {
+            println!("Connecting to Signaler at {}...", signaler_addr);
+            match tokio::net::TcpStream::connect(&signaler_addr).await {
+                Ok(stream) => {
+                    let mut framed = Framed::new(stream, SentinelCodec::new());
+                    let my_id = self.identity.node_id();
+                    
+                    let reg_msg = SentinelMessage::new_signal(
+                        my_id.clone(),
+                        SignalingMessage::Register {
+                            node_id: my_id.clone(),
+                            public_key: self.identity.public_key_bytes(),
+                            signature: vec![], 
+                        },
+                    );
+
+                    if framed.send(reg_msg).await.is_ok() {
+                        println!("Registered with Signaler as {}", my_id);
+                        while let Some(Ok(msg)) = framed.next().await {
+                            if let MessageContent::Signal(signal) = msg.content {
+                                match signal {
+                                    SignalingMessage::PunchCommand { target_addr, timestamp_ns } => {
+                                        println!("Punch command: target={} time={}", target_addr, timestamp_ns);
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(e) => eprintln!("Signaler offline: {}. Retrying...", e),
+            }
+            tokio::time::sleep(Duration::from_secs(5)).await;
+        }
+    }
+
     pub fn handle_incoming_message(self: Arc<Self>, msg: SentinelMessage, addr: String) -> BoxFuture<'static, Result<()>> {
         let node = self.clone();
         async move {
@@ -64,28 +101,28 @@ impl SentinelNode {
 
             if !msg.signature.is_empty() && !msg.public_key.is_empty() {
                 if !NodeIdentity::verify(&msg.sig_hash(), &msg.signature, &msg.public_key) {
-                    eprintln!(" Invalid signature from {}", msg.sender);
                     return Ok(());
                 }
             }
 
+            let sender_id = msg.sender.clone();
             let content = msg.content.clone();
 
             match content {
                 MessageContent::Handshake { public_key, node_name } => {
-                    println!(" Peer Verified: {} as {}", node_name, msg.sender);
+                    println!("Peer Verified: {} as {}", node_name, sender_id);
                     if let Some(mut peer) = node.peers.get_mut(&addr) {
-                        peer.node_id = msg.sender.clone();
+                        peer.node_id = sender_id;
                         peer.node_name = node_name;
                         peer.public_key = Some(public_key);
                     }
                 }
                 MessageContent::Chat(text) => {
-                    println!("[{}] (Chat): {}", msg.sender, text);
+                    println!("[{}] (Chat): {}", sender_id, text);
                     let _ = node.persist_message(&msg);
                     for entry in node.peers.iter() {
-                        if entry.key() != &addr {
-                            let _ = entry.value().tx.send(msg.clone());
+                        if entry.key() != &addr { 
+                            let _ = entry.value().tx.send(msg.clone()); 
                         }
                     }
                 }
@@ -97,8 +134,8 @@ impl SentinelNode {
                         }
                     }
                 }
-                MessageContent::Ping => {
-                    let _ = node.send_to_peer(&addr, MessageContent::Pong).await;
+                MessageContent::Ping => { 
+                    let _ = node.send_to_peer(&addr, MessageContent::Pong).await; 
                 }
                 _ => {}
             }
@@ -111,9 +148,14 @@ impl SentinelNode {
         let stream = tokio::net::TcpStream::connect(&addr).await?;
         let tls = connector.connect("sentinel-node.local", stream).await?;
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
-
         let (tx, mut rx) = mpsc::unbounded_channel();
-        self.peers.insert(addr.clone(), PeerState { tx: tx.clone(), node_id: "pending".into(), node_name: "new-peer".into(), public_key: None });
+        
+        self.peers.insert(addr.clone(), PeerState { 
+            tx: tx.clone(), 
+            node_id: "pending".into(), 
+            node_name: "new-peer".into(), 
+            public_key: None 
+        });
 
         let hs = SentinelMessage::new(self.identity.node_id(), MessageContent::Handshake {
             public_key: self.identity.public_key_bytes(),
@@ -124,14 +166,12 @@ impl SentinelNode {
         let addr_io = addr.clone();
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
-                // Simplified: Just send the message. Codec handles the Framing.
                 if sink.send(msg).await.is_err() { break; }
             }
         });
 
         let node_inner = Arc::clone(&self);
         tokio::spawn(async move {
-            // Simplified: codec now yields SentinelMessage directly.
             while let Some(Ok(msg)) = stream.next().await {
                 let _ = node_inner.clone().handle_incoming_message(msg, addr_io.clone()).await;
             }
@@ -152,10 +192,12 @@ impl SentinelNode {
                     last_seen: 0,
                 })
             }).collect();
-
+            
             if !peer_list.is_empty() {
                 let msg = SentinelMessage::new(self.identity.node_id(), MessageContent::PeerDiscovery(peer_list));
-                for entry in self.peers.iter() { self.sign_and_send(&entry.value().tx, msg.clone()); }
+                for entry in self.peers.iter() { 
+                    self.sign_and_send(&entry.value().tx, msg.clone()); 
+                }
             }
         }
     }

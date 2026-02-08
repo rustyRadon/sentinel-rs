@@ -25,6 +25,9 @@ struct Args {
 
     #[arg(short, long, default_value_t = 8443)]
     port: u16,
+
+    #[arg(short, long, default_value = "127.0.0.1:8888")]
+    signaler: String,
 }
 
 #[tokio::main]
@@ -34,7 +37,6 @@ async fn main() -> Result<()> {
         .expect("Failed to install rustls crypto provider");
 
     let args = Args::parse();
-
     let node = Arc::new(SentinelNode::new(args.data_dir).await?);
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = TcpListener::bind(&addr).await
@@ -44,6 +46,13 @@ async fn main() -> Result<()> {
     println!("NODE ID: {}", node.identity.node_id());
 
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
+
+    // Phase 3: Start Signaler Client
+    let signaler_node = Arc::clone(&node);
+    let signaler_addr = args.signaler.clone();
+    tokio::spawn(async move {
+        signaler_node.start_signaler_client(signaler_addr).await;
+    });
 
     let gossip_node = Arc::clone(&node);
     tokio::spawn(async move {
@@ -73,28 +82,18 @@ async fn main() -> Result<()> {
                         node_inner.sign_and_send(&tx, hs);
 
                         node_inner.peers.insert(addr_str.clone(), PeerState {
-                            tx,
-                            node_id: "pending".into(),
-                            node_name: "Inbound-Peer".into(),
-                            public_key: None,
+                            tx, node_id: "pending".into(), node_name: "Inbound-Peer".into(), public_key: None,
                         });
 
-                        // Writer loop: SentinelMessage is now passed directly to sink.send
                         tokio::spawn(async move {
                             while let Some(msg) = rx.recv().await {
-                                if sink.send(msg).await.is_err() { 
-                                    break; 
-                                }
+                                if sink.send(msg).await.is_err() { break; }
                             }
                         });
 
-                        // Reader loop: codec now yields SentinelMessage directly
                         while let Some(Ok(msg)) = stream.next().await {
-                            let _ = node_inner.clone()
-                                .handle_incoming_message(msg, addr_str.clone())
-                                .await;
+                            let _ = node_inner.clone().handle_incoming_message(msg, addr_str.clone()).await;
                         }
-                        
                         node_inner.peers.remove(&addr_str);
                     }
                 });
@@ -104,6 +103,5 @@ async fn main() -> Result<()> {
 
     println!("READY TO CHAT. Type and hit Enter.");
     handlers::handle_stdin(Arc::clone(&node)).await?;
-
     Ok(())
 }

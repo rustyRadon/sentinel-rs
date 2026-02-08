@@ -12,7 +12,6 @@ use lru::LruCache;
 use sentinel_crypto::NodeIdentity;
 use sentinel_protocol::{
     SentinelCodec, 
-    frame::Frame,
     messages::{SentinelMessage, MessageContent, PeerInfo}
 };
 use sentinel_transport::{SentinelAcceptor, SentinelConnector};
@@ -63,7 +62,6 @@ impl SentinelNode {
                 seen.put(msg.id, ());
             }
 
-            // verify signature
             if !msg.signature.is_empty() && !msg.public_key.is_empty() {
                 if !NodeIdentity::verify(&msg.sig_hash(), &msg.signature, &msg.public_key) {
                     eprintln!(" Invalid signature from {}", msg.sender);
@@ -71,7 +69,6 @@ impl SentinelNode {
                 }
             }
 
-            // Clone content to own the data for the match block
             let content = msg.content.clone();
 
             match content {
@@ -127,18 +124,16 @@ impl SentinelNode {
         let addr_io = addr.clone();
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
-                if let Ok(f) = Frame::new(1, 0, msg.to_bytes().into()) {
-                    if sink.send(f).await.is_err() { break; }
-                }
+                // Simplified: Just send the message. Codec handles the Framing.
+                if sink.send(msg).await.is_err() { break; }
             }
         });
 
         let node_inner = Arc::clone(&self);
         tokio::spawn(async move {
-            while let Some(Ok(frame)) = stream.next().await {
-                if let Ok(msg) = SentinelMessage::from_bytes(frame.payload()) {
-                    let _ = node_inner.clone().handle_incoming_message(msg, addr_io.clone()).await;
-                }
+            // Simplified: codec now yields SentinelMessage directly.
+            while let Some(Ok(msg)) = stream.next().await {
+                let _ = node_inner.clone().handle_incoming_message(msg, addr_io.clone()).await;
             }
             node_inner.peers.remove(&addr_io);
         });

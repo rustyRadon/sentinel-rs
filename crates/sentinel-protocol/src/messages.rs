@@ -11,6 +11,33 @@ pub struct PeerInfo {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
+pub enum SignalingMessage {
+    /// Node -> Signaler: Register with public key and signature of a nonce
+    Register {
+        node_id: String,
+        public_key: Vec<u8>,
+        signature: Vec<u8>,
+    },
+    /// Node -> Signaler: Ask for a peer's public address
+    LookupRequest {
+        target_id: String,
+    },
+    /// Signaler -> Node: Metadata for the target peer
+    PeerResponse {
+        peer_id: String,
+        public_addr: SocketAddr,
+    },
+    /// Signaler -> Both Nodes: Trigger the simultaneous open
+    PunchCommand {
+        target_addr: SocketAddr,
+        /// Unix timestamp (nanos) for synchronized connection start
+        timestamp_ns: u64,
+    },
+    /// Error reporting for signaling failures
+    Error(String),
+}
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub enum MessageContent {
     Chat(String),
     Handshake { 
@@ -18,6 +45,7 @@ pub enum MessageContent {
         node_name: String 
     },
     PeerDiscovery(Vec<PeerInfo>),
+    Signal(SignalingMessage),
     Ping,
     Pong,
 }
@@ -45,6 +73,11 @@ impl SentinelMessage {
             content,
             signature: vec![],
         }
+    }
+
+    /// Convenience helper for creating signaling messages
+    pub fn new_signal(sender: String, signal: SignalingMessage) -> Self {
+        Self::new(sender, MessageContent::Signal(signal))
     }
 
     pub fn sig_hash(&self) -> Vec<u8> {

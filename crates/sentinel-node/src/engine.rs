@@ -31,20 +31,28 @@ pub struct SentinelNode {
     pub mdns: ServiceDaemon,
     pub peers: DashMap<String, PeerState>,
     pub seen_messages: Mutex<LruCache<Uuid, ()>>,
+    pub signaler_tx: mpsc::UnboundedSender<SentinelMessage>,
 }
 
 impl SentinelNode {
-    pub async fn new(data_dir: PathBuf) -> Result<Self> {
+    /// Returns the Node instance and the Receiver for the signaling task
+    pub async fn new(data_dir: PathBuf) -> Result<(Self, mpsc::UnboundedReceiver<SentinelMessage>)> {
         if !data_dir.exists() { std::fs::create_dir_all(&data_dir)?; }
         let identity = NodeIdentity::load_or_generate(data_dir.join("identity.key"))?;
         let db = sled::open(data_dir.join("storage.db"))?;
+        
         let cert_path = if data_dir.join("node.crt").exists() { data_dir.join("node.crt") } else { PathBuf::from("certs/server.crt") };
         let key_path = if data_dir.join("node.key").exists() { data_dir.join("node.key") } else { PathBuf::from("certs/server.key") };
+        
         let acceptor = SentinelAcceptor::new(&cert_path, &key_path, Duration::from_secs(10))?;
         let mdns = ServiceDaemon::new().context("mDNS failed")?;
         let seen_messages = Mutex::new(LruCache::new(std::num::NonZeroUsize::new(1000).unwrap()));
+        
+        let (signaler_tx, signaler_rx) = mpsc::unbounded_channel();
 
-        Ok(Self { identity, acceptor, db, mdns, peers: DashMap::new(), seen_messages })
+        Ok((Self { 
+            identity, acceptor, db, mdns, peers: DashMap::new(), seen_messages, signaler_tx 
+        }, signaler_rx))
     }
 
     pub fn sign_and_send(&self, tx: &mpsc::UnboundedSender<SentinelMessage>, mut msg: SentinelMessage) {
@@ -53,7 +61,11 @@ impl SentinelNode {
         let _ = tx.send(msg);
     }
 
-    pub async fn start_signaler_client(self: Arc<Self>, signaler_addr: String) {
+    pub async fn start_signaler_client(
+        self: Arc<Self>, 
+        signaler_addr: String, 
+        mut signaler_outbound: mpsc::UnboundedReceiver<SentinelMessage>
+    ) {
         loop {
             println!("Connecting to Signaler at {}...", signaler_addr);
             match tokio::net::TcpStream::connect(&signaler_addr).await {
@@ -72,19 +84,48 @@ impl SentinelNode {
 
                     if framed.send(reg_msg).await.is_ok() {
                         println!("Registered with Signaler as {}", my_id);
-                        while let Some(Ok(msg)) = framed.next().await {
-                            if let MessageContent::Signal(signal) = msg.content {
-                                match signal {
-                                    SignalingMessage::PunchCommand { target_addr, timestamp_ns } => {
-                                        println!("Punch command: target={} time={}", target_addr, timestamp_ns);
-                                    }
-                                    _ => {}
+                        
+                        let (mut sink, mut stream) = framed.split();
+
+                        loop {
+                            tokio::select! {
+                                // Handle outbound requests from our CLI (like LookupRequest)
+                                Some(outbound_msg) = signaler_outbound.recv() => {
+                                    if sink.send(outbound_msg).await.is_err() { break; }
                                 }
+                                // Handle inbound responses from the Signaler
+                                Some(result) = stream.next() => {
+                                    match result {
+                                        Ok(msg) => {
+                                            if let MessageContent::Signal(signal) = msg.content {
+                                                match signal {
+                                                    SignalingMessage::PeerResponse { peer_id, public_addr } => {
+                                                        println!("Signaler found peer {} at {}. Dialing...", peer_id, public_addr);
+                                                        let node_clone = Arc::clone(&self);
+                                                        tokio::spawn(async move {
+                                                            let _ = node_clone.dial_peer(public_addr.to_string()).await;
+                                                        });
+                                                    }
+                                                    SignalingMessage::PunchCommand { target_addr, .. } => {
+                                                        println!("Incoming Punch Command for {}. Preparation starting...", target_addr);
+                                                    }
+                                                    SignalingMessage::Error(e) => eprintln!("Signaler Error: {}", e),
+                                                    _ => {}
+                                                }
+                                            }
+                                        }
+                                        Err(e) => {
+                                            eprintln!("Signaler stream error: {}", e);
+                                            break;
+                                        }
+                                    }
+                                }
+                                else => break,
                             }
                         }
                     }
                 }
-                Err(e) => eprintln!("Signaler offline: {}. Retrying...", e),
+                Err(e) => eprintln!("Signaler offline: {}. Retrying in 5s...", e),
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -195,12 +236,14 @@ impl SentinelNode {
             
             if !peer_list.is_empty() {
                 let msg = SentinelMessage::new(self.identity.node_id(), MessageContent::PeerDiscovery(peer_list));
+                // FIX: Changed 'node.peers' to 'self.peers'
                 for entry in self.peers.iter() { 
                     self.sign_and_send(&entry.value().tx, msg.clone()); 
                 }
             }
         }
     }
+    
 
     pub async fn send_to_peer(&self, addr: &str, content: MessageContent) -> Result<()> {
         if let Some(peer) = self.peers.get(addr) {

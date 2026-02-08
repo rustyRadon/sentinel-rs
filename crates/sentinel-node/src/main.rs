@@ -37,7 +37,12 @@ async fn main() -> Result<()> {
         .expect("Failed to install rustls crypto provider");
 
     let args = Args::parse();
-    let node = Arc::new(SentinelNode::new(args.data_dir).await?);
+
+    // 1. Initialize Node and capture the signaling receiver
+    // The constructor now returns (SentinelNode, Receiver)
+    let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir).await?;
+    let node = Arc::new(node_struct);
+
     let addr = format!("0.0.0.0:{}", args.port);
     let listener = TcpListener::bind(&addr).await
         .context(format!("Failed to bind to {}", addr))?;
@@ -45,20 +50,25 @@ async fn main() -> Result<()> {
     println!("RUNNING ON {}", addr);
     println!("NODE ID: {}", node.identity.node_id());
 
+    // 2. Start mDNS Discovery 
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
-    // Phase 3: Start Signaler Client
+    // 3. Phase 3: Start Signaler Client
+    // We pass the signaler_rx channel here so the background task can 
+    // forward messages from the CLI to the Signaler.
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();
     tokio::spawn(async move {
-        signaler_node.start_signaler_client(signaler_addr).await;
+        signaler_node.start_signaler_client(signaler_addr, signaler_rx).await;
     });
 
+    // 4. Start Gossip Service
     let gossip_node = Arc::clone(&node);
     tokio::spawn(async move {
         gossip_node.start_gossip_service().await;
     });
 
+    // 5. Handle Inbound Connections
     let server_node = Arc::clone(&node);
     tokio::spawn(async move {
         loop {
@@ -82,7 +92,10 @@ async fn main() -> Result<()> {
                         node_inner.sign_and_send(&tx, hs);
 
                         node_inner.peers.insert(addr_str.clone(), PeerState {
-                            tx, node_id: "pending".into(), node_name: "Inbound-Peer".into(), public_key: None,
+                            tx, 
+                            node_id: "pending".into(), 
+                            node_name: "Inbound-Peer".into(), 
+                            public_key: None,
                         });
 
                         tokio::spawn(async move {
@@ -101,7 +114,9 @@ async fn main() -> Result<()> {
         }
     });
 
+    // 6. CLI Handler
     println!("READY TO CHAT. Type and hit Enter.");
     handlers::handle_stdin(Arc::clone(&node)).await?;
+
     Ok(())
 }

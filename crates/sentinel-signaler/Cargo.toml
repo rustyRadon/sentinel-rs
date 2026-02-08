@@ -16,3 +16,5 @@ env_logger = "0.10"
 # Internal Workspace Dependencies
 sentinel-crypto = { path = "../sentinel-crypto" }
 sentinel-protocol = { path = "../sentinel-protocol" }
+futures = "0.3.31"
+tokio-util = { version = "0.7.18", features = ["codec"] }

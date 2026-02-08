@@ -25,4 +25,5 @@ pub enum ProtocolError {
 
     #[error("Protocol serialization error: {0}")]
     SerializationError(String),
+
 }

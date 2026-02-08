@@ -1422,11 +1422,13 @@ dependencies = [
  "bincode",
  "dashmap 5.5.3",
  "env_logger",
+ "futures",
  "log",
  "sentinel-crypto",
  "sentinel-protocol",
  "serde",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]

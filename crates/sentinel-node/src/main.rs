@@ -55,7 +55,7 @@ async fn main() -> Result<()> {
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
     // 3. Phase 3: Start Signaler Client
-    // We pass the signaler_rx channel here so the background task can 
+    // pass the signaler_rx channel here so the background task can 
     // forward messages from the CLI to the Signaler.
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();

@@ -22,3 +22,4 @@ dashmap = "6.1.0"
 bytes.workspace = true
 lru = "0.12"
 clap = { workspace = true, features = ["derive"] }
+socket2 = { version = "0.5", features = ["all"] }

@@ -10,6 +10,7 @@ use tokio_util::codec::Framed;
 mod discovery;
 mod engine;
 mod handlers;
+mod network;
 
 use crate::engine::{SentinelNode, PeerState};
 use sentinel_protocol::{

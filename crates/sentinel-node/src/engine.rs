@@ -189,6 +189,15 @@ impl SentinelNode {
     }
 
     pub async fn dial_peer(self: Arc<Self>, addr: String) -> Result<()> {
+
+        if self.peers.contains_key(&addr) {
+          // println!("Already connected to {}, skipping dial.", addr);
+        return Ok(());
+        }
+
+        if self.peers.contains_key(&addr) {
+            return Ok(());
+        }
        
         let target_addr: SocketAddr = addr
             .to_socket_addrs()?

@@ -189,17 +189,16 @@ impl SentinelNode {
             .next()
             .context("Failed to resolve target address")?;
 
-        // GATEKEEPER 1: Self-dial protection
+        //  Self-dial protection
         if target_addr.port() == self.listen_port {
             return Ok(());
         }
 
-        // GATEKEEPER 2: Duplicate connection protection
+        // duplicate connection protection
         if self.peers.contains_key(&addr) {
             return Ok(());
         }
 
-        // Create Fighter Socket
         let local_bind = SocketAddr::from(([0, 0, 0, 0], self.listen_port));
         let fighter = FighterSocket::create_war_ready(local_bind)
             .or_else(|_| FighterSocket::create_war_ready(SocketAddr::from(([0, 0, 0, 0], 0))))?;
@@ -285,7 +284,7 @@ impl SentinelNode {
     }
     
 
-    pub async fn send_to_peer(&self, addr: &str, content: MessageContent) -> Result<()> {
+    pub async fn _send_to_peer(&self, addr: &str, content: MessageContent) -> Result<()> {
         if let Some(peer) = self.peers.get(addr) {
             self.sign_and_send(&peer.tx, SentinelMessage::new(self.identity.node_id(), content));
         }

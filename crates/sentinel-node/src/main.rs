@@ -39,8 +39,7 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // 1. Initialize Node
-    // Passing args.port here so the node knows which port to use for 'Fighter' hijacking
+    // initialize Node
     let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir, args.port).await?;
     let node = Arc::new(node_struct);
 
@@ -51,23 +50,23 @@ async fn main() -> Result<()> {
     println!("RUNNING ON {}", addr);
     println!("NODE ID: {}", node.identity.node_id());
 
-    // 2. Start mDNS Discovery 
+    // sart mDNS discovery 
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
-    // 3. Start Signaler Client
+    // start signaler client
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();
     tokio::spawn(async move {
         signaler_node.start_signaler_client(signaler_addr, signaler_rx).await;
     });
 
-    // 4. Start Gossip Service
+    // gossip Service
     let gossip_node = Arc::clone(&node);
     tokio::spawn(async move {
         gossip_node.start_gossip_service().await;
     });
 
-    // 5. Handle Inbound Connections
+    // handle innnbound connections
     let server_node = Arc::clone(&node);
     tokio::spawn(async move {
         loop {
@@ -113,7 +112,6 @@ async fn main() -> Result<()> {
         }
     });
 
-    // 6. CLI Handler
     println!("READY TO CHAT. Type and hit Enter.");
     handlers::handle_stdin(Arc::clone(&node)).await?;
 

@@ -39,9 +39,9 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // 1. Initialize Node and capture the signaling receiver
-    // The constructor now returns (SentinelNode, Receiver)
-    let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir).await?;
+    // 1. Initialize Node
+    // Passing args.port here so the node knows which port to use for 'Fighter' hijacking
+    let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir, args.port).await?;
     let node = Arc::new(node_struct);
 
     let addr = format!("0.0.0.0:{}", args.port);
@@ -54,9 +54,7 @@ async fn main() -> Result<()> {
     // 2. Start mDNS Discovery 
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
-    // 3. Phase 3: Start Signaler Client
-    // pass the signaler_rx channel here so the background task can 
-    // forward messages from the CLI to the Signaler.
+    // 3. Start Signaler Client
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();
     tokio::spawn(async move {

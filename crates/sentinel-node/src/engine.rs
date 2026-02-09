@@ -30,6 +30,7 @@ pub struct PeerState {
 
 pub struct SentinelNode {
     pub identity: NodeIdentity,
+    pub listen_port: u16, // Storing our port for the 'Self-Dial' check
     pub acceptor: SentinelAcceptor,
     pub db: sled::Db,
     pub mdns: ServiceDaemon,
@@ -40,7 +41,7 @@ pub struct SentinelNode {
 
 impl SentinelNode {
     /// Returns the Node instance and the Receiver for the signaling task
-    pub async fn new(data_dir: PathBuf) -> Result<(Self, mpsc::UnboundedReceiver<SentinelMessage>)> {
+    pub async fn new(data_dir: PathBuf, listen_port: u16) -> Result<(Self, mpsc::UnboundedReceiver<SentinelMessage>)> {
         if !data_dir.exists() { std::fs::create_dir_all(&data_dir)?; }
         let identity = NodeIdentity::load_or_generate(data_dir.join("identity.key"))?;
         let db = sled::open(data_dir.join("storage.db"))?;
@@ -55,7 +56,14 @@ impl SentinelNode {
         let (signaler_tx, signaler_rx) = mpsc::unbounded_channel();
 
         Ok((Self { 
-            identity, acceptor, db, mdns, peers: DashMap::new(), seen_messages, signaler_tx 
+            identity, 
+            listen_port, // Corrected: using the passed parameter
+            acceptor, 
+            db, 
+            mdns, 
+            peers: DashMap::new(), 
+            seen_messages, 
+            signaler_tx 
         }, signaler_rx))
     }
 
@@ -64,6 +72,7 @@ impl SentinelNode {
         msg.signature = self.identity.sign(&msg.sig_hash());
         let _ = tx.send(msg);
     }
+
 
     pub async fn start_signaler_client(
         self: Arc<Self>, 
@@ -93,35 +102,26 @@ impl SentinelNode {
 
                         loop {
                             tokio::select! {
-                                // Handle outbound requests from our CLI (like LookupRequest)
                                 Some(outbound_msg) = signaler_outbound.recv() => {
                                     if sink.send(outbound_msg).await.is_err() { break; }
                                 }
-                                // Handle inbound responses from the Signaler
                                 Some(result) = stream.next() => {
                                     match result {
                                         Ok(msg) => {
                                             if let MessageContent::Signal(signal) = msg.content {
                                                 match signal {
-                                                    SignalingMessage::PeerResponse { peer_id, public_addr } => {
-                                                        println!("Signaler found peer {} at {}. Dialing...", peer_id, public_addr);
+                                                    SignalingMessage::PeerResponse { peer_id: _, public_addr } => {
+                                                        // Note: We used _ because we don't need peer_id here yet
                                                         let node_clone = Arc::clone(&self);
                                                         tokio::spawn(async move {
                                                             let _ = node_clone.dial_peer(public_addr.to_string()).await;
                                                         });
                                                     }
-                                                    SignalingMessage::PunchCommand { target_addr, .. } => {
-                                                        println!("Incoming Punch Command for {}. Preparation starting...", target_addr);
-                                                    }
-                                                    SignalingMessage::Error(e) => eprintln!("Signaler Error: {}", e),
                                                     _ => {}
                                                 }
                                             }
                                         }
-                                        Err(e) => {
-                                            eprintln!("Signaler stream error: {}", e);
-                                            break;
-                                        }
+                                        Err(_) => break,
                                     }
                                 }
                                 else => break,
@@ -129,7 +129,7 @@ impl SentinelNode {
                         }
                     }
                 }
-                Err(e) => eprintln!("Signaler offline: {}. Retrying in 5s...", e),
+                Err(_) => {}
             }
             tokio::time::sleep(Duration::from_secs(5)).await;
         }
@@ -151,9 +151,7 @@ impl SentinelNode {
             }
 
             let sender_id = msg.sender.clone();
-            let content = msg.content.clone();
-
-            match content {
+            match msg.content.clone() {
                 MessageContent::Handshake { public_key, node_name } => {
                     println!("Peer Verified: {} as {}", node_name, sender_id);
                     if let Some(mut peer) = node.peers.get_mut(&addr) {
@@ -179,9 +177,6 @@ impl SentinelNode {
                         }
                     }
                 }
-                MessageContent::Ping => { 
-                    let _ = node.send_to_peer(&addr, MessageContent::Pong).await; 
-                }
                 _ => {}
             }
             Ok(())
@@ -189,58 +184,52 @@ impl SentinelNode {
     }
 
     pub async fn dial_peer(self: Arc<Self>, addr: String) -> Result<()> {
-
-        if self.peers.contains_key(&addr) {
-          // println!("Already connected to {}, skipping dial.", addr);
-        return Ok(());
-        }
-
-        if self.peers.contains_key(&addr) {
-            return Ok(());
-        }
-       
         let target_addr: SocketAddr = addr
             .to_socket_addrs()?
             .next()
             .context("Failed to resolve target address")?;
 
-        let local_bind = SocketAddr::from(([0, 0, 0, 0], 0));
-        let fighter = FighterSocket::create_war_ready(local_bind)?;
+        // GATEKEEPER 1: Self-dial protection
+        if target_addr.port() == self.listen_port {
+            return Ok(());
+        }
 
-        // initiate connection (The Punch) typeshiiii
+        // GATEKEEPER 2: Duplicate connection protection
+        if self.peers.contains_key(&addr) {
+            return Ok(());
+        }
+
+        // Create Fighter Socket
+        let local_bind = SocketAddr::from(([0, 0, 0, 0], self.listen_port));
+        let fighter = FighterSocket::create_war_ready(local_bind)
+            .or_else(|_| FighterSocket::create_war_ready(SocketAddr::from(([0, 0, 0, 0], 0))))?;
+
         println!("Fighter socket punching through to {}...", target_addr);
         
-        // socket2's connect directly 
         match fighter.connect(&target_addr.into()) {
             Ok(_) => {}
             Err(e) => {
-                // since it's non-blocking, EINPROGRESS is expected
                 if e.raw_os_error() != Some(115) && e.kind() != std::io::ErrorKind::WouldBlock {
                     return Err(anyhow::anyhow!("Fighter punch failed: {}", e));
                 }
             }
         }
 
-        // over to Tokio hehehehe
         let std_stream: std::net::TcpStream = fighter.into();
         let tokio_stream = TokioTcpStream::from_std(std_stream)
             .context("Failed to hand over fighter socket to Tokio")?;
 
-        // gotta wait for the socket to be ready
         tokio_stream.writable().await?;
         if let Some(e) = tokio_stream.take_error()? {
             return Err(anyhow::anyhow!("Socket error after punch: {}", e));
         }
 
-        //  to TLS... saftyy
         let connector = SentinelConnector::new();
         let tls = connector.connect("sentinel-node.local", tokio_stream).await?;
 
-        // wrap in Framed Codec ( makes it a "Stream")
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
         let (tx, mut rx) = mpsc::unbounded_channel();
 
-        // track peer state
         self.peers.insert(addr.clone(), PeerState { 
             tx: tx.clone(), 
             node_id: "pending".into(), 
@@ -248,30 +237,26 @@ impl SentinelNode {
             public_key: None 
         });
 
-        // send Handshake
         let hs = SentinelMessage::new(self.identity.node_id(), MessageContent::Handshake {
             public_key: self.identity.public_key_bytes(),
             node_name: "Sentinel-Node".into(),
         });
         self.sign_and_send(&tx, hs);
 
-        // tasks for IO
         let addr_io = addr.clone();
-        
-        // Task A: Outbound (Forward messages from channel to socket)
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if sink.send(msg).await.is_err() { break; }
             }
         });
 
-        // Task B: Inbound (Process messages from socket)
         let node_inner = Arc::clone(&self);
         tokio::spawn(async move {
             while let Some(Ok(msg)) = stream.next().await {
                 let _ = node_inner.clone().handle_incoming_message(msg, addr_io.clone()).await;
             }
             node_inner.peers.remove(&addr_io);
+            println!("Disconnected from {}", addr_io);
         });
 
         Ok(())

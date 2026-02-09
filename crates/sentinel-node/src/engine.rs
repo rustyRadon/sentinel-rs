@@ -8,6 +8,10 @@ use std::sync::Arc;
 use futures::{StreamExt, SinkExt, future::{BoxFuture, FutureExt}}; 
 use tokio_util::codec::Framed;
 use lru::LruCache;
+use tokio::net::TcpStream as TokioTcpStream;
+
+use crate::network::FighterSocket;
+use std::net::{SocketAddr, ToSocketAddrs};
 
 use sentinel_crypto::NodeIdentity;
 use sentinel_protocol::{
@@ -185,12 +189,49 @@ impl SentinelNode {
     }
 
     pub async fn dial_peer(self: Arc<Self>, addr: String) -> Result<()> {
+       
+        let target_addr: SocketAddr = addr
+            .to_socket_addrs()?
+            .next()
+            .context("Failed to resolve target address")?;
+
+        let local_bind = SocketAddr::from(([0, 0, 0, 0], 0));
+        let fighter = FighterSocket::create_war_ready(local_bind)?;
+
+        // initiate connection (The Punch) typeshiiii
+        println!("Fighter socket punching through to {}...", target_addr);
+        
+        // socket2's connect directly 
+        match fighter.connect(&target_addr.into()) {
+            Ok(_) => {}
+            Err(e) => {
+                // since it's non-blocking, EINPROGRESS is expected
+                if e.raw_os_error() != Some(115) && e.kind() != std::io::ErrorKind::WouldBlock {
+                    return Err(anyhow::anyhow!("Fighter punch failed: {}", e));
+                }
+            }
+        }
+
+        // over to Tokio hehehehe
+        let std_stream: std::net::TcpStream = fighter.into();
+        let tokio_stream = TokioTcpStream::from_std(std_stream)
+            .context("Failed to hand over fighter socket to Tokio")?;
+
+        // gotta wait for the socket to be ready
+        tokio_stream.writable().await?;
+        if let Some(e) = tokio_stream.take_error()? {
+            return Err(anyhow::anyhow!("Socket error after punch: {}", e));
+        }
+
+        //  to TLS... saftyy
         let connector = SentinelConnector::new();
-        let stream = tokio::net::TcpStream::connect(&addr).await?;
-        let tls = connector.connect("sentinel-node.local", stream).await?;
+        let tls = connector.connect("sentinel-node.local", tokio_stream).await?;
+
+        // wrap in Framed Codec ( makes it a "Stream")
         let (mut sink, mut stream) = Framed::new(tls, SentinelCodec::new()).split();
         let (tx, mut rx) = mpsc::unbounded_channel();
-        
+
+        // track peer state
         self.peers.insert(addr.clone(), PeerState { 
             tx: tx.clone(), 
             node_id: "pending".into(), 
@@ -198,19 +239,24 @@ impl SentinelNode {
             public_key: None 
         });
 
+        // send Handshake
         let hs = SentinelMessage::new(self.identity.node_id(), MessageContent::Handshake {
             public_key: self.identity.public_key_bytes(),
             node_name: "Sentinel-Node".into(),
         });
         self.sign_and_send(&tx, hs);
 
+        // tasks for IO
         let addr_io = addr.clone();
+        
+        // Task A: Outbound (Forward messages from channel to socket)
         tokio::spawn(async move {
             while let Some(msg) = rx.recv().await {
                 if sink.send(msg).await.is_err() { break; }
             }
         });
 
+        // Task B: Inbound (Process messages from socket)
         let node_inner = Arc::clone(&self);
         tokio::spawn(async move {
             while let Some(Ok(msg)) = stream.next().await {
@@ -218,6 +264,7 @@ impl SentinelNode {
             }
             node_inner.peers.remove(&addr_io);
         });
+
         Ok(())
     }
 
@@ -236,7 +283,6 @@ impl SentinelNode {
             
             if !peer_list.is_empty() {
                 let msg = SentinelMessage::new(self.identity.node_id(), MessageContent::PeerDiscovery(peer_list));
-                // FIX: Changed 'node.peers' to 'self.peers'
                 for entry in self.peers.iter() { 
                     self.sign_and_send(&entry.value().tx, msg.clone()); 
                 }

@@ -8,7 +8,7 @@ impl FighterSocket {
     /// creates a raw TCP socket with SO_REUSEADDR and SO_REUSEPORT.
     /// allows mee to "hijack" our own listening port for outbound dials.
     pub fn create_war_ready(local_addr: SocketAddr) -> Result<Socket> {
-        let domain = if local_addr.is_ipv4() { Domain::IPV4 } else { Domain::IPV6 };
+        let domain = if local_addr.is_ipv6() { Domain::IPV6 } else { Domain::IPV4 };
         
         let socket = Socket::new(domain, Type::STREAM, Some(Protocol::TCP))?;
 

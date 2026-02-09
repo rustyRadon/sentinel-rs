@@ -1,52 +1,56 @@
-# Sentinel-rs (Phase 2: The Secure Mesh)
+# 🛡️ Sentinel-rs
 
-**Sentinel-rs** is a decentralized, leaderless peer-to-peer (P2P) communication engine. In this architecture, identity is not granted by a central authority or a username—it is derived from pure mathematics. Every node is its own sovereign identity, discovering peers via local radio (mDNS) and establishing end-to-end encrypted tunnels.
+**A high-performance, decentralized P2P VPN and communication engine built in Rust.**
 
-> **Status: Phase 2 (Complete)** - Cryptographic Handshakes & Autonomous Discovery
+[![Rust](https://img.shields.io/badge/language-Rust-orange.svg)](https://www.rust-lang.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-## 🚀 Phase 2 Achievements
-- **Cryptographic Sovereignty**: Replaced traditional CA-based TLS with **Ed25519 Public Key Pinning**. Trust is based on keys, not third-party issuers.
-- **Autonomous Discovery**: Integrated mDNS (Multicast DNS) for "Zero-Config" connectivity. Nodes find each other on the local network automatically.
-- **Hybrid Security Model**:
-    * **TLS 1.3 Layer**: Provides high-speed stream encryption to prevent eavesdropping.
-    * **Ed25519 Layer**: Provides identity verification, ensuring the person you are talking to is the owner of the Private Key.
-- **Persistence Layer**: Integrated `Sled` (embedded database) for high-performance message logging and identity storage.
-- **Concurrent Engine**: Fully asynchronous architecture using `Tokio`, allowing a single node to manage dozens of peer connections simultaneously.
-
-## 🛠 Architecture
+Sentinel is a peer-to-peer (P2P) networking stack designed to bypass the "Cloud Tax." It enables direct, encrypted communication between nodes even when they are behind restrictive NATs (Network Address Translation) or firewalls, without relying on expensive centralized relay servers.
 
 
 
-Sentinel-rs is organized into a modular crate system:
-1.  **`sentinel-crypto`**: The root of trust. Handles Ed25519 key generation, signing, and verification.
-2.  **`sentinel-transport`**: The secure pipe. Implements the "Dangerous" TLS verifier to allow peer-to-peer encrypted tunnels.
-3.  **`sentinel-protocol`**: The shared language. Defines the framing and message structures for handshakes and chat.
-4.  **`sentinel-node (Engine)`**: The coordinator. Manages the state, coordinates between discovery and the UI, and handles message persistence.
+## 🚀 Key Features
+
+* **Fighter Sockets:** Custom socket logic using `SO_REUSEADDR` and `SO_REUSEPORT` to perform TCP Hole Punching, allowing nodes to dial out and listen on the same identity port.
+* **Encrypted by Default:** Every connection is upgraded to a TLS 1.3 tunnel using `rustls`, ensuring total privacy and forward secrecy.
+* **Decentralized Discovery:** Combines local mDNS discovery with a lightweight Signaler (Matchmaker) for global connectivity.
+* **Gossip Protocol:** Nodes share peer information automatically, building a resilient mesh network that heals itself.
+* **Embedded Persistence:** High-performance message logging and state management using the `sled` Key-Value store.
+
+## 🛠️ Technical Deep Dive: The "Fighter Socket"
+
+Most P2P applications fail because home routers block incoming connections. Sentinel overcomes this using **TCP Simultaneous Open**. 
+
+By hijacking the local listening port and initiating outbound connection attempts via non-blocking I/O, Sentinel "punches" a hole through the NAT. The router is tricked into believing the incoming peer connection is a response to our own outbound request.
+
+
 
 ## 🚦 Getting Started
 
-### 1. Prerequisites
-Ensure you have the Rust toolchain installed.
+### Prerequisites
+* Rust (latest stable)
+* OpenSSL (for certain cryptographic dependencies)
+
+### Installation
 ```bash
-curl --proto '=https' --tlsv1.2 -sSf [https://sh.rustup.rs](https://sh.rustup.rs) | sh
+git clone [https://github.com/rustyRadon/sentinel-rs.git](https://github.com/rustyRadon/sentinel-rs.git)
+cd sentinel-rs
+cargo build --release
 
-### 2. Running a Local Mesh
-To simulate a network on a single machine, open three separate terminal windows and run each command:
+## Running a Node
+###Start the Signaler (The Matchmaker):
+cargo run -p sentinel-signaler
 
-**Node 1 (Port 8081):**
-```bash
-cargo run --bin sentinel-node -- -d ./node1 -p 8081
-cargo run --bin sentinel-node -- -d ./node2 -p 8082
-cargo run --bin sentinel-node -- -d ./node3 -p 8083
+### Start Node A:
+cargo run -p sentinel-node -- --port 8443 --data-dir ./.nodeA
 
-### 3. Usage Commands
-Once the nodes are running, they will automatically discover and verify each other via mDNS. You can also interact with the node via the following CLI commands:
+### Start Node B and Dial Node A:
+cargo run -p sentinel-node -- --port 8444 --data-dir ./.nodeB
+# Inside the terminal:
+/dial <NODE_A_ID>
 
-/dial <ip>:<port>: Manually initiate a connection to a specific peer.
-/peers: List all currently verified cryptographic identities and their connection status.
-/history: Retrieve and display the last 10 messages stored in the local Sled database.
 
-##  🔐 Security Note
-This project utilizes Self-Signed TLS Certificates strictly for transport-layer encryption, wrapped inside a custom Ed25519 Handshake for identity.
+🤝 Contributing
+Contributions are welcome! If you're interested in low-level networking, VPN protocols, or distributed systems, feel free to fork the repo and submit a PR.
 
-While standard browsers or OS tools might flag the TLS as "Insecure" due to the lack of a central Certificate Authority (CA), the SentinelNode engine performs its own verification by pinning the public_key exchanged during the handshake. This implements a Trust on First Use (TOFU) security model, providing cryptographic certainty similar to SSH without the need for centralized intermediaries.
+Built with ❤️ and 🦀 by rustyRadon

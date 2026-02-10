@@ -131,8 +131,11 @@ impl SentinelNode {
             .next()
             .context("Failed to resolve target address")?;
 
-        if target_addr.port() == self.listen_port || self.peers.contains_key(&addr) {
-            return Ok(());
+        if let Some(my_public) = *self.public_addr.read().await {
+            if target_addr.ip() == my_public.ip() && target_addr.port() == self.listen_port {
+                println!("Skipping dial: Target is self/local hairpin.");
+                return Ok(());
+            }
         }
 
         let local_bind = SocketAddr::from(([0, 0, 0, 0], self.listen_port));
@@ -287,6 +290,10 @@ impl SentinelNode {
                 if !NodeIdentity::verify(&msg.sig_hash(), &msg.signature, &msg.public_key) {
                     return Ok(());
                 }
+            }
+
+            if msg.version != 3 {
+                return Err(anyhow::anyhow!("Protocol version mismatch: expected 3, got {}", msg.version));
             }
 
             match msg.content.clone() {

@@ -42,9 +42,9 @@ async fn main() -> Result<()> {
     let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir, args.port).await?;
     let node = Arc::new(node_struct);
 
-    // PHASE 3: Perform STUN Discovery before opening services
+    // PHASE 3: Discover Public Identity
     if let Err(e) = node.discover_and_set_public_ip().await {
-        eprintln!("Public IP discovery skipped: {}", e);
+        eprintln!("Public IP discovery failed (Offline or NAT restricted): {}", e);
     }
 
     let addr = format!("0.0.0.0:{}", args.port);
@@ -55,29 +55,26 @@ async fn main() -> Result<()> {
     println!("SENTINEL ACTIVE ON: {}", addr);
     println!("NODE IDENTITY: {}", node.identity.node_id());
 
-    // START: mDNS Discovery
+    // spawning Services
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
-    // START: Signaler Client
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();
     tokio::spawn(async move {
         signaler_node.start_signaler_client(signaler_addr, signaler_rx).await;
     });
 
-    // START: Gossip Service
     let gossip_node = Arc::clone(&node);
     tokio::spawn(async move {
         gossip_node.start_gossip_service().await;
     });
 
-    // START: Heartbeat Service (Keep-Alive & Pruning)
     let heartbeat_node = Arc::clone(&node);
     tokio::spawn(async move {
         heartbeat_node.start_heartbeat_service().await;
     });
 
-    // HANDLER: Inbound TCP Connections
+    // inbound Connection Task
     let server_node = Arc::clone(&node);
     tokio::spawn(async move {
         loop {
@@ -113,17 +110,12 @@ async fn main() -> Result<()> {
 
                         tokio::spawn(async move {
                             while let Some(msg) = rx.recv().await {
-                                if sink.send(msg).await.is_err() {
-                                    break;
-                                }
+                                if sink.send(msg).await.is_err() { break; }
                             }
                         });
 
                         while let Some(Ok(msg)) = stream.next().await {
-                            let _ = node_inner
-                                .clone()
-                                .handle_incoming_message(msg, addr_str.clone())
-                                .await;
+                            let _ = node_inner.clone().handle_incoming_message(msg, addr_str.clone()).await;
                         }
                         node_inner.peers.remove(&addr_str);
                     }
@@ -133,7 +125,31 @@ async fn main() -> Result<()> {
     });
 
     println!("SYSTEM READY. Input commands below.");
-    handlers::handle_stdin(Arc::clone(&node)).await?;
 
+    // orchestrating shutdown vs input vodooooo lmao
+    tokio::select! {
+        _ = handlers::handle_stdin(Arc::clone(&node)) => {
+            println!("Terminal input closed.");
+        }
+        _ = tokio::signal::ctrl_c() => {
+            println!("\n[!] Shutdown signal received.");
+        }
+    }
+
+    // --- GRACEFUL SHUTDOWN SEQUENCE ---
+    println!("Shutting down... Notifying peers.");
+    let goodbye = SentinelMessage::new(
+        node.identity.node_id(), 
+        MessageContent::Disconnect("Node shutting down gracefully".into())
+    );
+    
+    for entry in node.peers.iter() {
+        let _ = entry.value().tx.send(goodbye.clone());
+    }
+
+    println!("Flushing storage...");
+    let _ = node.db.flush_async().await;
+    
+    println!("Sentinel Node offline.");
     Ok(())
 }

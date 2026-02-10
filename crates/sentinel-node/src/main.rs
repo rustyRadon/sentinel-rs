@@ -12,10 +12,10 @@ mod engine;
 mod handlers;
 mod network;
 
-use crate::engine::{SentinelNode, PeerState};
+use crate::engine::{PeerState, SentinelNode};
 use sentinel_protocol::{
-    SentinelCodec, 
-    messages::{SentinelMessage, MessageContent}
+    messages::{MessageContent, SentinelMessage},
+    SentinelCodec,
 };
 
 #[derive(Parser, Debug)]
@@ -39,34 +39,45 @@ async fn main() -> Result<()> {
 
     let args = Args::parse();
 
-    // initialize Node
     let (node_struct, signaler_rx) = SentinelNode::new(args.data_dir, args.port).await?;
     let node = Arc::new(node_struct);
 
+    // PHASE 3: Perform STUN Discovery before opening services
+    if let Err(e) = node.discover_and_set_public_ip().await {
+        eprintln!("Public IP discovery skipped: {}", e);
+    }
+
     let addr = format!("0.0.0.0:{}", args.port);
-    let listener = TcpListener::bind(&addr).await
+    let listener = TcpListener::bind(&addr)
+        .await
         .context(format!("Failed to bind to {}", addr))?;
 
-    println!("RUNNING ON {}", addr);
-    println!("NODE ID: {}", node.identity.node_id());
+    println!("SENTINEL ACTIVE ON: {}", addr);
+    println!("NODE IDENTITY: {}", node.identity.node_id());
 
-    // sart mDNS discovery 
+    // START: mDNS Discovery
     discovery::start_discovery(Arc::clone(&node), args.port).await?;
 
-    // start signaler client
+    // START: Signaler Client
     let signaler_node = Arc::clone(&node);
     let signaler_addr = args.signaler.clone();
     tokio::spawn(async move {
         signaler_node.start_signaler_client(signaler_addr, signaler_rx).await;
     });
 
-    // gossip Service
+    // START: Gossip Service
     let gossip_node = Arc::clone(&node);
     tokio::spawn(async move {
         gossip_node.start_gossip_service().await;
     });
 
-    // handle innnbound connections
+    // START: Heartbeat Service (Keep-Alive & Pruning)
+    let heartbeat_node = Arc::clone(&node);
+    tokio::spawn(async move {
+        heartbeat_node.start_heartbeat_service().await;
+    });
+
+    // HANDLER: Inbound TCP Connections
     let server_node = Arc::clone(&node);
     tokio::spawn(async move {
         loop {
@@ -81,29 +92,38 @@ async fn main() -> Result<()> {
                         let (tx, mut rx) = mpsc::unbounded_channel::<SentinelMessage>();
 
                         let hs = SentinelMessage::new(
-                            node_inner.identity.node_id(), 
+                            node_inner.identity.node_id(),
                             MessageContent::Handshake {
                                 public_key: node_inner.identity.public_key_bytes(),
                                 node_name: "Sentinel-Node".into(),
-                            }
+                            },
                         );
                         node_inner.sign_and_send(&tx, hs);
 
-                        node_inner.peers.insert(addr_str.clone(), PeerState {
-                            tx, 
-                            node_id: "pending".into(), 
-                            node_name: "Inbound-Peer".into(), 
-                            public_key: None,
-                        });
+                        node_inner.peers.insert(
+                            addr_str.clone(),
+                            PeerState {
+                                tx,
+                                node_id: "pending".into(),
+                                node_name: "Inbound-Peer".into(),
+                                public_key: None,
+                                last_seen: std::time::Instant::now(),
+                            },
+                        );
 
                         tokio::spawn(async move {
                             while let Some(msg) = rx.recv().await {
-                                if sink.send(msg).await.is_err() { break; }
+                                if sink.send(msg).await.is_err() {
+                                    break;
+                                }
                             }
                         });
 
                         while let Some(Ok(msg)) = stream.next().await {
-                            let _ = node_inner.clone().handle_incoming_message(msg, addr_str.clone()).await;
+                            let _ = node_inner
+                                .clone()
+                                .handle_incoming_message(msg, addr_str.clone())
+                                .await;
                         }
                         node_inner.peers.remove(&addr_str);
                     }
@@ -112,7 +132,7 @@ async fn main() -> Result<()> {
         }
     });
 
-    println!("READY TO CHAT. Type and hit Enter.");
+    println!("SYSTEM READY. Input commands below.");
     handlers::handle_stdin(Arc::clone(&node)).await?;
 
     Ok(())

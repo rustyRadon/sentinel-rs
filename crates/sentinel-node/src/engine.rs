@@ -83,6 +83,14 @@ impl SentinelNode {
         ))
     }
 
+    pub async fn is_local_peer(&self, target: SocketAddr) -> bool {
+        if let Some(my_public) = *self.public_addr.read().await {
+            // If the IP is the same but the port is different, it's a hairpin
+            return target.ip() == my_public.ip();
+        }
+        false
+    }
+
     /// Discovers the node's public IP using STUN and updates internal state
     pub async fn discover_and_set_public_ip(&self) -> Result<()> {
         match FighterSocket::discover_public_ip(self.listen_port).await {
@@ -130,6 +138,14 @@ impl SentinelNode {
             .to_socket_addrs()?
             .next()
             .context("Failed to resolve target address")?;
+
+        if self.is_local_peer(target_addr).await {
+            println!(" Local peer detected. Skipping NAT punch, using direct route.");
+        }
+
+        if target_addr.port() == self.listen_port || self.peers.contains_key(&addr) {
+            return Ok(());
+        }
 
         if let Some(my_public) = *self.public_addr.read().await {
             if target_addr.ip() == my_public.ip() && target_addr.port() == self.listen_port {
